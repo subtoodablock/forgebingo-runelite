@@ -6,21 +6,20 @@ import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
 import java.lang.reflect.Type;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import net.runelite.client.util.Filepath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Durable FIFO of events not yet accepted by the server. Persisted as JSON
- * (atomic write via temp file + move) so a crash or client close loses nothing.
+ * Durable FIFO of events not yet accepted by the server. Persisted as JSON in the plugin's own data folder through
+ * RuneLite's Filepath API (atomic write via temp file + move) so a crash or client close loses nothing.
  * Bounded by count and age.
  */
 public final class OfflineQueue
@@ -34,11 +33,11 @@ public final class OfflineQueue
     /** The server rejects events older than one day, so there is no point keeping them longer. */
     public static final long MAX_AGE_MILLIS = 23 * 3_600_000L;
 
-    private final Path file;
+    private final Filepath file;
     private final Gson gson;
     private final Map<String, QueuedEvent> entries = new LinkedHashMap<>();
 
-    public OfflineQueue(Path file, Gson gson)
+    public OfflineQueue(Filepath file, Gson gson)
     {
         this.file = file;
         this.gson = gson;
@@ -47,11 +46,11 @@ public final class OfflineQueue
     public synchronized void load()
     {
         entries.clear();
-        if (!Files.isRegularFile(file))
+        if (!file.isFile())
         {
             return;
         }
-        try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8))
+        try (Reader reader = file.openBufferedReader())
         {
             List<QueuedEvent> loaded = gson.fromJson(reader, LIST_TYPE);
             if (loaded != null)
@@ -71,9 +70,9 @@ public final class OfflineQueue
             log.debug("Could not read queue file {}: {}", file, ex.toString());
             try
             {
-                Files.move(file, file.resolveSibling(file.getFileName() + ".corrupt"), StandardCopyOption.REPLACE_EXISTING);
+                file.moveTo(file.getParent().joinSegment(file.getFileName() + ".corrupt"), StandardCopyOption.REPLACE_EXISTING);
             }
-            catch (IOException ignored)
+            catch (IOException | RuntimeException ignored)
             {
                 // nothing more we can do
             }
@@ -174,26 +173,23 @@ public final class OfflineQueue
     {
         try
         {
-            Path parent = file.getParent();
-            if (parent != null)
-            {
-                Files.createDirectories(parent);
-            }
-            Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-            try (Writer writer = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8))
+            Filepath parent = file.getParent();
+            parent.createDirectories();
+            Filepath tmp = parent.joinSegment(file.getFileName() + ".tmp");
+            try (Writer writer = tmp.openBufferedWriter())
             {
                 gson.toJson(new ArrayList<>(entries.values()), LIST_TYPE, writer);
             }
             try
             {
-                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                tmp.moveTo(file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             }
-            catch (java.nio.file.AtomicMoveNotSupportedException ex)
+            catch (AtomicMoveNotSupportedException ex)
             {
-                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
+                tmp.moveTo(file, StandardCopyOption.REPLACE_EXISTING);
             }
         }
-        catch (IOException ex)
+        catch (IOException | RuntimeException ex)
         {
             log.debug("Could not persist queue to {}: {}", file, ex.toString());
         }

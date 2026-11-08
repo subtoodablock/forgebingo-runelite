@@ -23,7 +23,8 @@ import com.google.gson.Gson;
 import com.google.inject.Provides;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
-import java.io.File;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -64,7 +65,6 @@ import net.runelite.client.input.KeyManager;
 import net.runelite.client.input.MouseManager;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.StatChanged;
-import net.runelite.client.RuneLite;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.chat.ChatMessageManager;
 import net.runelite.client.chat.QueuedMessage;
@@ -81,11 +81,14 @@ import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.DrawManager;
 import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.ui.overlay.OverlayManager;
+import net.runelite.client.util.Filepath;
 import net.runelite.client.util.ImageUtil;
 import okhttp3.OkHttpClient;
 
 @PluginDescriptor(
     name = "ForgeBingo",
+    internalName = "forgebingo",
+    legacyDataDirectory = "forgebingo",
     description = "Sends your bingo-relevant drops, collection log, pets, KC and levels to ForgeBingo and shows your team board",
     tags = {"bingo", "clan", "team", "loot", "event", "collection log"}
 )
@@ -209,8 +212,7 @@ public class ForgeBingoPlugin extends Plugin
             configManager.unsetConfiguration(ForgeBingoConfig.GROUP, "apiBaseUrl");
         }
         api = new ApiClient(okHttpClient, gson, this::effectiveBaseUrl, config::apiKey, VERSION);
-        File dir = new File(RuneLite.RUNELITE_DIR, "forgebingo");
-        queue = new OfflineQueue(new File(dir, "queue.json").toPath(), gson);
+        queue = new OfflineQueue(queueFile(), gson);
         queue.load();
         processor = new QueueProcessor(queue, api::sendEvent, new QueueListener(), System::currentTimeMillis, random);
 
@@ -296,6 +298,19 @@ public class ForgeBingoPlugin extends Plugin
         pendingHost = host;
         askToTrust(host);
         return null;
+    }
+
+    /** The offline queue lives in .runelite/plugin-data/forgebingo (RuneLite's Filepath API, moved from .runelite/forgebingo). */
+    private Filepath queueFile()
+    {
+        try
+        {
+            return getPluginDirectory().joinSegment("queue.json");
+        }
+        catch (IOException ex)
+        {
+            throw new UncheckedIOException("ForgeBingo could not open its data folder", ex);
+        }
     }
 
     private void askToTrust(String host)

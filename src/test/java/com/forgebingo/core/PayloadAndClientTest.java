@@ -320,7 +320,7 @@ public class PayloadAndClientTest
     public void queueFileNeverContainsApiKey() throws Exception
     {
         java.nio.file.Path f = java.nio.file.Files.createTempFile("q", ".json");
-        OfflineQueue q = new OfflineQueue(f, gson);
+        OfflineQueue q = new OfflineQueue(TestFiles.fp(f), gson);
         q.add(new QueuedEvent(kcEvent(), 0));
         server.enqueue(new MockResponse().setBody("{}"));
         client.sendEvent(kcEvent());

@@ -39,12 +39,12 @@ public class OfflineQueueTest
     public void survivesRestart() throws IOException
     {
         Path f = tmp.getRoot().toPath().resolve("forgebingo").resolve("queue.json");
-        OfflineQueue q = new OfflineQueue(f, gson);
+        OfflineQueue q = new OfflineQueue(TestFiles.fp(f), gson);
         q.add(new QueuedEvent(event("a"), 1000));
         q.add(new QueuedEvent(event("b"), 1000));
         q.scheduleRetry("b", 3, 99_000, "HTTP 503");
 
-        OfflineQueue reloaded = new OfflineQueue(f, gson);
+        OfflineQueue reloaded = new OfflineQueue(TestFiles.fp(f), gson);
         reloaded.load();
         assertEquals(2, reloaded.size());
         assertEquals(1, reloaded.due(1000).size());
@@ -60,7 +60,7 @@ public class OfflineQueueTest
     {
         Path f = tmp.getRoot().toPath().resolve("queue.json");
         Files.write(f, "{{{ not json".getBytes());
-        OfflineQueue q = new OfflineQueue(f, gson);
+        OfflineQueue q = new OfflineQueue(TestFiles.fp(f), gson);
         q.load();
         assertEquals(0, q.size());
         assertTrue(Files.exists(tmp.getRoot().toPath().resolve("queue.json.corrupt")));
@@ -69,7 +69,7 @@ public class OfflineQueueTest
     @Test
     public void boundedAndExpiring() throws IOException
     {
-        OfflineQueue q = new OfflineQueue(tmp.getRoot().toPath().resolve("q.json"), gson);
+        OfflineQueue q = new OfflineQueue(TestFiles.fp(tmp.getRoot().toPath().resolve("q.json")), gson);
         List<QueuedEvent> evicted = new ArrayList<>();
         for (int i = 0; i < OfflineQueue.MAX_ENTRIES + 3; i++)
         {
@@ -120,7 +120,7 @@ public class OfflineQueueTest
     public void processorRetriesTransientDropsPermanentPausesOnAuth() throws IOException
     {
         Path f = tmp.getRoot().toPath().resolve("q.json");
-        OfflineQueue q = new OfflineQueue(f, gson);
+        OfflineQueue q = new OfflineQueue(TestFiles.fp(f), gson);
         AtomicLong now = new AtomicLong(1_000_000);
         q.add(new QueuedEvent(event("ok"), now.get()));
         q.add(new QueuedEvent(event("bad"), now.get()));
@@ -167,7 +167,7 @@ public class OfflineQueueTest
     @Test
     public void processorRegeneratesIdOnEventIdConflict() throws IOException
     {
-        OfflineQueue q = new OfflineQueue(tmp.getRoot().toPath().resolve("q.json"), gson);
+        OfflineQueue q = new OfflineQueue(TestFiles.fp(tmp.getRoot().toPath().resolve("q.json")), gson);
         q.add(new QueuedEvent(event("dup"), 1000));
         Recorder rec = new Recorder();
         java.util.Set<String> seen = new java.util.HashSet<>();
@@ -187,7 +187,7 @@ public class OfflineQueueTest
     @Test
     public void processorDropsExpired() throws IOException
     {
-        OfflineQueue q = new OfflineQueue(tmp.getRoot().toPath().resolve("q.json"), gson);
+        OfflineQueue q = new OfflineQueue(TestFiles.fp(tmp.getRoot().toPath().resolve("q.json")), gson);
         q.add(new QueuedEvent(event("old"), 0));
         Recorder rec = new Recorder();
         QueueProcessor p = new QueueProcessor(q, e -> result(200), rec,
