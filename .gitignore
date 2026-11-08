@@ -1,0 +1,13 @@
+.gradle/
+build/
+out/
+.idea/
+*.iml
+*.class
+local.properties
+.env
+.env.*
+
+# notes for the owner, not part of the plugin
+HOW TO SUBMIT.md
+plugin-hub-manifest.txt
