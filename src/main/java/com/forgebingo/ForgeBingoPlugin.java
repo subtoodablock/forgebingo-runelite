@@ -1239,7 +1239,7 @@ public class ForgeBingoPlugin extends Plugin
         {
             clientThread.invoke(() -> chatMessageManager.queue(QueuedMessage.builder()
                 .type(ChatMessageType.CONSOLE)
-                .runeLiteFormattedMessage("[ForgeBingo] " + text)
+                .runeLiteFormattedMessage("[ForgeBingo] " + text.replace("<", "").replace(">", ""))
                 .build()));
         }
     }
