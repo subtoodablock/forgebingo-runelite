@@ -43,6 +43,16 @@ public class TileInfoTest
     }
 
     @Test
+    public void hiddenTileShowsTheOrganizersNameOrSecretTile()
+    {
+        assertEquals("Secret tile", TileInfo.shownTitle(tile("?")));
+        ApiModels.Tile named = tile("Mystery Wildy tile");
+        named.secret = true;
+        assertEquals("Mystery Wildy tile", TileInfo.shownTitle(named));
+        assertEquals("Bandos hilt", TileInfo.shownTitle(tile("Bandos hilt", new ApiModels.Task())));
+    }
+
+    @Test
     public void worthAddsTaskPointsAndFallsBackToTilePoints()
     {
         assertEquals(3, TileInfo.worth(tile("Rings", task(1, 0, 1), task(1, 0, 1), task(1, 0, 1))));

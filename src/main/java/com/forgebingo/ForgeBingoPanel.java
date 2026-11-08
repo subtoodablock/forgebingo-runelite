@@ -329,7 +329,7 @@ class ForgeBingoPanel extends PluginPanel
         if (previous != null && tileLabels.get(previous) != null) tileLabels.get(previous).setBorder(BorderFactory.createLineBorder(new Color(0, 0, 0, 0), 2));
         if (t.id != null && tileLabels.get(t.id) != null) tileLabels.get(t.id).setBorder(BorderFactory.createLineBorder(ColorScheme.BRAND_ORANGE, 2));
         detail.removeAll();
-        JLabel title = new JLabel("<html><body style='width:170px'><b>" + esc(t.title) + "</b></body></html>");
+        JLabel title = new JLabel("<html><body style='width:170px'><b>" + esc(TileInfo.shownTitle(t)) + "</b></body></html>");
         title.setForeground(ColorScheme.BRAND_ORANGE);
         detail.add(title);
         boolean secret = TileInfo.isSecret(t);

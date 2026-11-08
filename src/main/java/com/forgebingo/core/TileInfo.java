@@ -17,6 +17,14 @@ public final class TileInfo
     {
     }
 
+    /** What a tile is called on screen: a hidden secret tile shows the name its organizer gave it, else "Secret tile". */
+    public static String shownTitle(ApiModels.Tile t)
+    {
+        if (t == null) return "";
+        if (isSecret(t) && !t.completed && (t.title == null || t.title.isEmpty() || "?".equals(t.title))) return "Secret tile";
+        return t.title == null ? "" : t.title;
+    }
+
     /** A hidden secret tile: the server sends "?" and no tasks (and, newer servers, secret=true). */
     public static boolean isSecret(ApiModels.Tile t)
     {

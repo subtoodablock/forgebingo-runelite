@@ -449,7 +449,7 @@ public class BoardOverlay extends Overlay
             g.setFont(titleFont);
             FontMetrics tm = g.getFontMetrics();
             g.setColor(GOLD);
-            for (String line : wrap(tm, secret && !t.completed ? "Secret tile" : t.title, maxW, 2))
+            for (String line : wrap(tm, TileInfo.shownTitle(t), maxW, 2))
             {
                 y += tm.getAscent();
                 g.drawString(line, x, y);
