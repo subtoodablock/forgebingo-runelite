@@ -1261,8 +1261,14 @@ public class ForgeBingoPlugin extends Plugin
     {
         // only in game, and never with the bank PIN keypad on screen (its layout would be in the proof)
         if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen()) return;
+        // marked before the frame arrives: the server's answer can come back first, and the upload waits for this
+        shotsInProgress.add(eventId);
         drawManager.requestNextFrameListener(image -> {
-            if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen()) return;
+            if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen())
+            {
+                shotsInProgress.remove(eventId);
+                return;
+            }
             executor.execute(() -> {
             try
             {
@@ -1294,9 +1300,16 @@ public class ForgeBingoPlugin extends Plugin
             {
                 log.debug("screenshot failed", ex);
             }
+            finally
+            {
+                shotsInProgress.remove(eventId);
+            }
         });
         });
     }
+
+    /** Event ids whose screenshot is being taken right now (requested, not yet stored or given up). */
+    private final java.util.Set<String> shotsInProgress = ConcurrentHashMap.newKeySet();
 
     /**
      * "Send screenshot as proof" in the side panel: takes the next game frame (stamped like drop proof) and sends it
@@ -1412,9 +1425,28 @@ public class ForgeBingoPlugin extends Plugin
 
     private void maybeUploadScreenshot(GameEvent event, ApiModels.EventResult result)
     {
-        Screenshot s = screenshots.remove(event.id);
-        if (s == null || !config.screenshotOnMatch() || result == null || !result.isMatched() || result.duplicate)
+        maybeUploadScreenshot(event, result, 0);
+    }
+
+    /**
+     * The server often answers before the screenshot of the same drop is stored (it is taken on the next frame and
+     * saved on this same worker), so when one is still being taken, try again shortly instead of giving up. This
+     * race is why almost no drop screenshots were uploaded (2026-11-11).
+     */
+    private void maybeUploadScreenshot(GameEvent event, ApiModels.EventResult result, int attempt)
+    {
+        if (!config.screenshotOnMatch() || result == null || !result.isMatched() || result.duplicate)
         {
+            screenshots.remove(event.id);
+            return;
+        }
+        Screenshot s = screenshots.remove(event.id);
+        if (s == null)
+        {
+            if (shotsInProgress.contains(event.id) && attempt < 20 && running)
+            {
+                executor.schedule(() -> maybeUploadScreenshot(event, result, attempt + 1), 250, TimeUnit.MILLISECONDS);
+            }
             return;
         }
         // One upload per team, attached to that team's submissions from matched[].submissionId.
