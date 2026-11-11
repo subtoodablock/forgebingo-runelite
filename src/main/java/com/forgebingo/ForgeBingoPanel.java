@@ -115,11 +115,30 @@ class ForgeBingoPanel extends PluginPanel
         content.setOpaque(true);
 
         // --- header card: name, connection, account, send queue
+        // collapsible (owner, 2026-11-11): the title row (and the connection line) always shows; tap it to hide or
+        // show the account, queue and "Tracking drops as ..." details. Remembered between sessions.
         JPanel head = card(null);
+        JPanel titleRow = new JPanel(new BorderLayout(6, 0));
+        titleRow.setOpaque(false);
         JLabel title = new JLabel("ForgeBingo");
         title.setFont(FontManager.getRunescapeBoldFont());
         title.setForeground(ColorScheme.BRAND_ORANGE);
-        head.add(left(title));
+        titleRow.add(title, BorderLayout.CENTER);
+        headToggle.setFont(FontManager.getRunescapeSmallFont());
+        headToggle.setForeground(MUTED);
+        titleRow.add(headToggle, BorderLayout.EAST);
+        titleRow.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        titleRow.setToolTipText("Show or hide connection details");
+        titleRow.addMouseListener(new MouseAdapter()
+        {
+            @Override
+            public void mouseClicked(MouseEvent e)
+            {
+                setHeaderCollapsed(!headerCollapsed);
+                plugin.setPanelHeaderCollapsed(headerCollapsed);
+            }
+        });
+        head.add(fullWidth(titleRow, -1));
         head.add(Box.createVerticalStrut(2));
         status.setFont(FontManager.getRunescapeSmallFont());
         head.add(left(status));
@@ -132,8 +151,9 @@ class ForgeBingoPanel extends PluginPanel
         add(content, head);
 
         identity.add(message("Log in to the game so we can check which character you're playing.", ConnectionStatus.Level.INFO));
-        add(content, gap(6));
+        add(content, identityGap);
         add(content, identity);
+        setHeaderCollapsed(plugin.panelHeaderCollapsed());
         teamNews.setVisible(false);
         add(content, teamNews);
 
@@ -215,6 +235,23 @@ class ForgeBingoPanel extends PluginPanel
     public Dimension getPreferredSize()
     {
         return new Dimension(PluginPanel.PANEL_WIDTH, super.getPreferredSize().height);
+    }
+
+    private final JLabel headToggle = new JLabel("Hide");
+    private final Component identityGap = gap(6);
+    private boolean headerCollapsed;
+
+    /** Collapsed: only "ForgeBingo" and the connection line; the account, queue and tracking cards are hidden. */
+    private void setHeaderCollapsed(boolean collapsed)
+    {
+        headerCollapsed = collapsed;
+        headToggle.setText(collapsed ? "Show" : "Hide");
+        scope.setVisible(!collapsed);
+        queueLabel.setVisible(!collapsed);
+        identity.setVisible(!collapsed);
+        identityGap.setVisible(!collapsed);
+        revalidate();
+        repaint();
     }
 
     // ------------------------------------------------------------------ public API (called by the plugin)
@@ -487,51 +524,32 @@ class ForgeBingoPanel extends PluginPanel
         {
             detail.add(left(cardText("Working on it: " + workingNames(t), ColorScheme.BRAND_ORANGE)));
         }
-        detail.add(divider());
-
+        // REQUIREMENTS: one box per task, laid out like the website's tile card (owner, 2026-11-11)
+        if (!t.tasks.isEmpty())
+        {
+            detail.add(gap(8));
+            detail.add(left(smallCaps("Requirements")));
+            detail.add(gap(4));
+        }
+        int counted = 0;
+        int waiting = 0;
         for (ApiModels.Task k : t.tasks)
         {
-            boolean kDone = k.completed || t.completed;
-            detail.add(checkRow(k.description, kDone, kDone ? ColorScheme.PROGRESS_COMPLETE_COLOR : Color.WHITE, false));
-            List<ItemSlots.Slot> slots = ItemSlots.of(k);
-            if (!slots.isEmpty() && !kDone)
-            {
-                // "one of each": every item is its own line with its own tick, like the website
-                for (ItemSlots.Slot s : slots)
-                {
-                    String name = s.itemIds.size() == 1 ? plugin.itemName(s.itemIds.get(0)) : "Any one: " + anyOf(s.itemIds);
-                    String count = s.need > 1 ? "  " + s.approved + "/" + s.need : "";
-                    String pending = s.pending > 0 && !s.done() ? " (waiting)" : "";
-                    Color c = s.done() ? ColorScheme.PROGRESS_COMPLETE_COLOR : s.pending > 0 ? ColorScheme.PROGRESS_INPROGRESS_COLOR : Color.LIGHT_GRAY;
-                    detail.add(checkRow(name + count + pending, s.done(), c, true));
-                }
-            }
-            else if (k.requiredQty > 1 && !kDone)
-            {
-                detail.add(gap(3));
-                detail.add(progressBar(Math.min(k.requiredQty, k.approvedQty), k.requiredQty,
-                    k.approvedQty + " / " + k.requiredQty + (k.pendingQty > 0 ? "   +" + k.pendingQty + " waiting" : ""), false));
-            }
-            else if (k.pendingQty > 0 && !kDone)
-            {
-                detail.add(left(cardText("Sent, waiting for a reviewer", ColorScheme.PROGRESS_INPROGRESS_COLOR)));
-            }
-            if (!kDone)
-            {
-                detail.add(gap(2));
-                detail.add(left(cardText(trackingText(k), MUTED)));
-            }
-            if (!kDone && !secret && k.id != null)
-            {
-                // RuneLite sends its own proof: a game screenshot straight to this task, waiting for review
-                JButton shot = button("Send screenshot", "Takes a screenshot of the game now and sends it as proof for this task");
-                String what = k.description == null || k.description.isEmpty() ? TileInfo.shownTitle(t) : k.description;
-                shot.addActionListener(e -> plugin.sendScreenshotProof(k.id, what));
-                detail.add(gap(4));
-                detail.add(fullWidth(shot, 22));
-            }
-            detail.add(gap(8));
+            counted += k.approvedQty;
+            waiting += k.pendingQty;
+            detail.add(taskBox(t, k, secret));
+            detail.add(gap(6));
         }
+
+        // PROOF: what this team has sent for the tile
+        detail.add(gap(2));
+        detail.add(left(smallCaps("Proof")));
+        detail.add(gap(3));
+        String proof = t.completed ? "Done - proof accepted."
+            : counted == 0 && waiting == 0 ? "No proof sent yet."
+            : (counted > 0 ? counted + " counted" : "") + (counted > 0 && waiting > 0 ? ", " : "") + (waiting > 0 ? waiting + " waiting for review" : "") + ".";
+        detail.add(left(cardText(proof, t.completed ? ColorScheme.PROGRESS_COMPLETE_COLOR : waiting > 0 ? ColorScheme.PROGRESS_INPROGRESS_COLOR : Color.LIGHT_GRAY)));
+        detail.add(gap(8));
         if (!t.completed && t.id != null)
         {
             boolean on = plugin.isWorkingOn(t);
@@ -662,6 +680,143 @@ class ForgeBingoPanel extends PluginPanel
         });
         loadIcon(l, t, itemManager);
         return l;
+    }
+
+    /** "REQUIREMENTS" / "PROOF": small gold capitals, like the website's section labels. */
+    private static JLabel smallCaps(String text)
+    {
+        JLabel l = new JLabel(text.toUpperCase());
+        l.setFont(FontManager.getRunescapeSmallFont());
+        l.setForeground(new Color(0xc8a35a));
+        return l;
+    }
+
+    /** An item's icon at px size (fills in when the sprite loads); blank when there is no item manager yet. */
+    private JLabel itemIcon(int itemId, int px)
+    {
+        JLabel l = new JLabel();
+        l.setPreferredSize(new Dimension(px, px));
+        l.setMinimumSize(new Dimension(px, px));
+        if (lastItemManager == null) return l;
+        AsyncBufferedImage img = lastItemManager.getImage(itemId);
+        Runnable set = () -> l.setIcon(new ImageIcon(fit(img, px)));
+        set.run();
+        img.onLoaded(() -> javax.swing.SwingUtilities.invokeLater(set));
+        return l;
+    }
+
+    /**
+     * One requirement, website style: icon box, name and count, a thin bar, then either each item ("x1") for
+     * one-of-each tasks or "Any of" with the items it accepts; how it is tracked and "Send screenshot" underneath.
+     */
+    private JPanel taskBox(ApiModels.Tile t, ApiModels.Task k, boolean secret)
+    {
+        boolean done = k.completed || t.completed;
+        JPanel box = column();
+        box.setOpaque(true);
+        box.setBackground(new Color(0x1e1e1e));
+        box.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(done ? new Color(0x2f5a2f) : new Color(0x3a3a3a)),
+            BorderFactory.createEmptyBorder(6, 6, 6, 6)));
+        List<Integer> items = k.itemIds == null ? java.util.Collections.<Integer>emptyList() : k.itemIds;
+
+        // icon + name + count
+        JPanel top = new JPanel(new BorderLayout(6, 0));
+        top.setOpaque(false);
+        JPanel iconBox = new JPanel(new BorderLayout());
+        iconBox.setBackground(new Color(0x111111));
+        iconBox.setBorder(BorderFactory.createLineBorder(new Color(0x2a2a2a)));
+        iconBox.setPreferredSize(new Dimension(28, 28));
+        if (!items.isEmpty()) iconBox.add(itemIcon(items.get(0), 22), BorderLayout.CENTER);
+        else
+        {
+            JLabel tick = new JLabel(done ? BOX_ON : BOX_OFF);
+            tick.setHorizontalAlignment(SwingConstants.CENTER);
+            iconBox.add(tick, BorderLayout.CENTER);
+        }
+        top.add(iconBox, BorderLayout.WEST);
+        JLabel name = new JLabel(wrapHtml(k.description == null || k.description.isEmpty() ? "Task" : k.description, CARD_TEXT - 80));
+        name.setFont(FontManager.getRunescapeFont());
+        name.setForeground(done ? ColorScheme.PROGRESS_COMPLETE_COLOR : Color.WHITE);
+        top.add(name, BorderLayout.CENTER);
+        int need = Math.max(1, k.requiredQty);
+        JLabel count = new JLabel(done ? "Done" : Math.min(need, k.approvedQty) + "/" + need);
+        count.setFont(FontManager.getRunescapeSmallFont());
+        count.setForeground(done ? ColorScheme.PROGRESS_COMPLETE_COLOR : MUTED);
+        count.setVerticalAlignment(SwingConstants.TOP);
+        top.add(count, BorderLayout.EAST);
+        box.add(fullWidth(top, -1));
+
+        // thin bar
+        box.add(gap(4));
+        JProgressBar bar = new JProgressBar(0, need);
+        bar.setValue(done ? need : Math.min(need, k.approvedQty));
+        bar.setForeground(done ? ColorScheme.PROGRESS_COMPLETE_COLOR : ColorScheme.BRAND_ORANGE);
+        bar.setBackground(new Color(0x0f0f0f));
+        bar.setBorder(BorderFactory.createEmptyBorder());
+        box.add(fullWidth(bar, 5));
+
+        List<ItemSlots.Slot> slots = ItemSlots.of(k);
+        if (!slots.isEmpty())
+        {
+            // one of each: every item (or group) on its own row with "x1", ticked green when done
+            box.add(gap(4));
+            for (ItemSlots.Slot s : slots)
+            {
+                boolean sDone = done || s.done();
+                JPanel row = new JPanel(new BorderLayout(6, 0));
+                row.setOpaque(false);
+                row.setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 0));
+                row.add(itemIcon(s.itemIds.get(0), 14), BorderLayout.WEST);
+                String label = s.itemIds.size() == 1 ? plugin.itemName(s.itemIds.get(0)) : "Any one: " + anyOf(s.itemIds);
+                JLabel n = new JLabel(wrapHtml(label + (s.pending > 0 && !sDone ? " (waiting)" : ""), CARD_TEXT - 70));
+                n.setFont(FontManager.getRunescapeSmallFont());
+                n.setForeground(sDone ? ColorScheme.PROGRESS_COMPLETE_COLOR : s.pending > 0 ? ColorScheme.PROGRESS_INPROGRESS_COLOR : TEXT);
+                row.add(n, BorderLayout.CENTER);
+                JLabel x = new JLabel(sDone ? "done" : s.need > 1 ? s.approved + "/" + s.need : "x" + s.need);
+                x.setFont(FontManager.getRunescapeSmallFont());
+                x.setForeground(sDone ? ColorScheme.PROGRESS_COMPLETE_COLOR : MUTED);
+                row.add(x, BorderLayout.EAST);
+                box.add(fullWidth(row, -1));
+            }
+        }
+        else if (items.size() > 1 && !done)
+        {
+            // any of these items counts: a short list with icons, then "+N more"
+            box.add(gap(4));
+            box.add(left(cardText("Any of:", MUTED)));
+            int shown = Math.min(6, items.size());
+            for (int i = 0; i < shown; i++)
+            {
+                JPanel row = new JPanel(new BorderLayout(6, 0));
+                row.setOpaque(false);
+                row.setBorder(BorderFactory.createEmptyBorder(1, 4, 1, 0));
+                row.add(itemIcon(items.get(i), 14), BorderLayout.WEST);
+                JLabel n = new JLabel(wrapHtml(plugin.itemName(items.get(i)), CARD_TEXT - 40));
+                n.setFont(FontManager.getRunescapeSmallFont());
+                n.setForeground(TEXT);
+                row.add(n, BorderLayout.CENTER);
+                box.add(fullWidth(row, -1));
+            }
+            if (items.size() > shown) box.add(left(cardText("+" + (items.size() - shown) + " more", MUTED)));
+        }
+
+        if (!done)
+        {
+            if (k.pendingQty > 0) box.add(left(cardText(k.pendingQty + " waiting for review", ColorScheme.PROGRESS_INPROGRESS_COLOR)));
+            box.add(gap(3));
+            box.add(left(cardText(trackingText(k), MUTED)));
+            if (!secret && k.id != null)
+            {
+                // RuneLite sends its own proof: a game screenshot straight to this task, waiting for review
+                JButton shot = button("Send screenshot", "Takes a screenshot of the game now and sends it as proof for this task");
+                String what = k.description == null || k.description.isEmpty() ? TileInfo.shownTitle(t) : k.description;
+                shot.addActionListener(e -> plugin.sendScreenshotProof(k.id, what));
+                box.add(gap(4));
+                box.add(fullWidth(shot, 22));
+            }
+        }
+        return fullWidth(box, -1);
     }
 
     /** "Hydra's eye, Hydra's fang or Hydra's heart" */

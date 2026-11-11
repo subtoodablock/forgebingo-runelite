@@ -186,6 +186,13 @@ public interface ForgeBingoConfig extends Config
         return "";
     }
 
+    /** The side panel's connection details are folded away. */
+    @ConfigItem(keyName = "panelHeaderCollapsed", name = "", description = "", hidden = true)
+    default boolean panelHeaderCollapsed()
+    {
+        return false;
+    }
+
     @ConfigItem(keyName = "activeBoardId", name = "", description = "", hidden = true)
     default String activeBoardId()
     {

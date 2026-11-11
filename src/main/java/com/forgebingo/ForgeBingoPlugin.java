@@ -513,6 +513,16 @@ public class ForgeBingoPlugin extends Plugin
         });
     }
 
+    boolean panelHeaderCollapsed()
+    {
+        return config.panelHeaderCollapsed();
+    }
+
+    void setPanelHeaderCollapsed(boolean collapsed)
+    {
+        configManager.setConfiguration(ForgeBingoConfig.GROUP, "panelHeaderCollapsed", collapsed);
+    }
+
     /** Is the player working on this tile? The team list from the server when it sends one, else the local list. */
     boolean isWorkingOn(ApiModels.Tile t)
     {
