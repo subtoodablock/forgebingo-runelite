@@ -889,6 +889,26 @@ public class ForgeBingoPlugin extends Plugin
         submit(ev, true);
     }
 
+    /** "You pick the Master Farmer's pocket." (also "You pick the Elf's pocket.") */
+    private static final java.util.regex.Pattern PICKPOCKET = java.util.regex.Pattern.compile("You pick (?:the )?(.{1,40}?)'s pocket");
+    private volatile String lastPickpocketNpc;
+    private volatile int lastPickpocketTick = -100;
+
+    /** Pickpocket loot that went into the seed box: sent like other pickpocket loot (only items the board wants). */
+    private void reportPickpocket(String npc, Map<Integer, Integer> gained)
+    {
+        if (!config.sendChestLoot()) return;
+        GameEvent ev = base(GameEvent.RAID_CHEST);
+        ev.sourceName = npc;
+        for (Map.Entry<Integer, Integer> g : gained.entrySet())
+        {
+            int id = itemManager.canonicalize(g.getKey());
+            if (g.getValue() > 0 && boardItemIds.contains(id)) ev.addItem(id, g.getValue());
+        }
+        if (ev.items == null || ev.items.isEmpty()) return;
+        submit(ev, true);
+    }
+
     @Subscribe
     public void onChatMessage(ChatMessage e)
     {
@@ -907,6 +927,14 @@ public class ForgeBingoPlugin extends Plugin
                 }
             });
             return;
+        }
+        if (e.getType() != ChatMessageType.GAMEMESSAGE && e.getType() != ChatMessageType.SPAM) return;
+        java.util.regex.Matcher pick = PICKPOCKET.matcher(msg == null ? "" : msg);
+        if (pick.find())
+        {
+            // remembered for the seed box (its seeds never reach the loot tracker)
+            lastPickpocketNpc = pick.group(1);
+            lastPickpocketTick = tick;
         }
         if (e.getType() != ChatMessageType.GAMEMESSAGE) return;
         ChatParsers.collectionLogItem(msg).ifPresent(name -> {
@@ -946,6 +974,20 @@ public class ForgeBingoPlugin extends Plugin
         {
             Map<Integer, Integer> after = containerCounts(c);
             Map<Integer, Integer> was = lastContainers.put(e.getContainerId(), after);
+            if (was != null && e.getContainerId() == net.runelite.api.gameval.InventoryID.SEED_BOX)
+            {
+                // An open seed box takes pickpocketed seeds straight in, so RuneLite's loot tracker never reports
+                // them (owner, 2026-11-11). Seeds that land in the box right after "You pick the ...'s pocket"
+                // count as that pickpocket's loot.
+                int tick = client.getTickCount();
+                String npc = lastPickpocketNpc;
+                if (npc != null && tick - lastPickpocketTick <= 2)
+                {
+                    Map<Integer, Integer> gained = InventoryDiff.added(was, after);
+                    if (!gained.isEmpty()) reportPickpocket(npc, gained);
+                }
+                return;
+            }
             if (was != null)
             {
                 int tick = client.getTickCount();
@@ -1341,7 +1383,7 @@ public class ForgeBingoPlugin extends Plugin
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 if (!ImageIO.write(img, "png", out)) return;
                 ApiResult<ApiModels.ProofResponse> r = a.uploadTaskScreenshot(team, taskId, out.toByteArray(), kw,
-                    taken.withZoneSameInstant(java.time.ZoneOffset.UTC).toInstant().toString());
+                    taken.withZoneSameInstant(java.time.ZoneOffset.UTC).toInstant().toString(), what);
                 if (r.ok())
                 {
                     notice("Screenshot sent for " + what + " - waiting for review.", true);
@@ -1451,16 +1493,30 @@ public class ForgeBingoPlugin extends Plugin
         }
         // One upload per team, attached to that team's submissions from matched[].submissionId.
         Map<String, List<String>> byTeam = new java.util.LinkedHashMap<>();
+        // the file is named after the (first) task this drop counted for, e.g. big-boners_3f2a9c1e.png
+        Map<String, String> labels = new java.util.HashMap<>();
+        Map<String, String> taskNames = new java.util.HashMap<>();
+        ApiModels.BoardResponse cb = currentBoard();
+        if (cb != null && cb.tiles != null)
+        {
+            for (ApiModels.Tile t : cb.tiles)
+            {
+                if (t != null && t.tasks != null) for (ApiModels.Task k : t.tasks) if (k != null && k.id != null) taskNames.put(k.id, k.description);
+            }
+        }
         for (ApiModels.Match m : result.matched)
         {
             if (m.teamId == null || m.submissionId == null) continue;
             byTeam.computeIfAbsent(m.teamId, k -> new ArrayList<>());
             List<String> ids = byTeam.get(m.teamId);
             if (!ids.contains(m.submissionId) && ids.size() < 25) ids.add(m.submissionId);
+            String name = m.taskId == null ? null : taskNames.get(m.taskId);
+            if (name == null || name.isEmpty()) name = m.tileId == null ? null : tileTitles.get(m.tileId);
+            if (name != null && !name.isEmpty()) labels.putIfAbsent(m.teamId, name);
         }
         for (Map.Entry<String, List<String>> t : byTeam.entrySet())
         {
-            ApiResult<ApiModels.ProofResponse> r = api.uploadProof(t.getKey(), s.png, t.getValue(), s.keyword, s.capturedAt);
+            ApiResult<ApiModels.ProofResponse> r = api.uploadProof(t.getKey(), s.png, t.getValue(), s.keyword, s.capturedAt, labels.get(t.getKey()));
             if (!r.ok())
             {
                 notice("Screenshot upload failed: " + r.describe(), true);

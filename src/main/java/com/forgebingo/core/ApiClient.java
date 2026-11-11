@@ -161,6 +161,12 @@ public final class ApiClient
     /** As above, also telling the server which keyword was stamped on the shot and when it was taken (ISO instant). */
     public ApiResult<ApiModels.ProofResponse> uploadProof(String teamBoardId, byte[] png, List<String> submissionIds, String stampKeyword, String capturedAt)
     {
+        return uploadProof(teamBoardId, png, submissionIds, stampKeyword, capturedAt, null);
+    }
+
+    /** As above; label names the stored file after the task it proves ("Big boners" becomes big-boners_....png). */
+    public ApiResult<ApiModels.ProofResponse> uploadProof(String teamBoardId, byte[] png, List<String> submissionIds, String stampKeyword, String capturedAt, String label)
+    {
         if (png.length > MAX_SCREENSHOT_BYTES)
         {
             return new ApiResult<>(413, null, "screenshot too large", "payload_too_large", null, 0);
@@ -171,6 +177,7 @@ public final class ApiClient
         }
         MultipartBody.Builder mb = new MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("submissionIds", String.join(",", submissionIds));
+        addLabel(mb, label);
         if (stampKeyword != null && !stampKeyword.isEmpty()) mb.addFormDataPart("stampKeyword", stampKeyword.length() > 40 ? stampKeyword.substring(0, 40) : stampKeyword);
         if (capturedAt != null && !capturedAt.isEmpty()) mb.addFormDataPart("capturedAt", capturedAt.length() > 40 ? capturedAt.substring(0, 40) : capturedAt);
         RequestBody body = mb.addFormDataPart("file", "proof.png", RequestBody.create(MediaType.parse("image/png"), png)).build();
@@ -178,17 +185,27 @@ public final class ApiClient
     }
 
     /** POST /v1/boards/{team}/proofs with a taskId: a new pending submission for that task with this screenshot. */
-    public ApiResult<ApiModels.ProofResponse> uploadTaskScreenshot(String teamBoardId, String taskId, byte[] png, String stampKeyword, String capturedAt)
+    public ApiResult<ApiModels.ProofResponse> uploadTaskScreenshot(String teamBoardId, String taskId, byte[] png, String stampKeyword, String capturedAt, String label)
     {
         if (png.length > MAX_SCREENSHOT_BYTES)
         {
             return new ApiResult<>(413, null, "screenshot too large", "payload_too_large", null, 0);
         }
         MultipartBody.Builder mb = new MultipartBody.Builder().setType(MultipartBody.FORM).addFormDataPart("taskId", taskId);
+        addLabel(mb, label);
         if (stampKeyword != null && !stampKeyword.isEmpty()) mb.addFormDataPart("stampKeyword", stampKeyword.length() > 40 ? stampKeyword.substring(0, 40) : stampKeyword);
         if (capturedAt != null && !capturedAt.isEmpty()) mb.addFormDataPart("capturedAt", capturedAt.length() > 40 ? capturedAt.substring(0, 40) : capturedAt);
         RequestBody body = mb.addFormDataPart("file", "proof.png", RequestBody.create(MediaType.parse("image/png"), png)).build();
         return execute(builder(url("v1", "boards", teamBoardId, "proofs")).post(body).build(), ApiModels.ProofResponse.class);
+    }
+
+    /** The task name the server uses for the file name (letters, digits and spaces only, at most 60). */
+    private static void addLabel(MultipartBody.Builder mb, String label)
+    {
+        if (label == null) return;
+        String clean = label.replaceAll("[^A-Za-z0-9 ]", " ").trim().replaceAll("\\s+", " ");
+        if (clean.isEmpty()) return;
+        mb.addFormDataPart("label", clean.length() > 60 ? clean.substring(0, 60) : clean);
     }
 
     /** Fetches an icon from the server's icon proxy. Returns null on any failure. */
