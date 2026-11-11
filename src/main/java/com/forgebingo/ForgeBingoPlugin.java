@@ -860,6 +860,8 @@ public class ForgeBingoPlugin extends Plugin
             return;
         }
         if (recordType.equals("NPC")) return;
+        // Wilderness loot key chests never count (they return other players' items)
+        if (SourceClassifier.ignored(e.getName())) return;
         if (recordType.equals("PICKPOCKET"))
         {
             // Pickpocketing (e.g. a Blood shard from a Vyre): sent only when the loot holds an item the board's
@@ -1294,6 +1296,64 @@ public class ForgeBingoPlugin extends Plugin
             }
         });
         });
+    }
+
+    /**
+     * "Send screenshot as proof" in the side panel: takes the next game frame (stamped like drop proof) and sends it
+     * as a new proof for that task, waiting for review like proof added on the website. Any thread.
+     */
+    void sendScreenshotProof(String taskId, String what)
+    {
+        String team = config.activeBoardId();
+        ApiClient a = api;
+        if (taskId == null || team == null || team.isEmpty() || a == null || !a.configured())
+        {
+            notice("Connect the plugin to your team first.", true);
+            return;
+        }
+        if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen())
+        {
+            notice("Log in (and close the bank PIN) to take a screenshot.", true);
+            return;
+        }
+        drawManager.requestNextFrameListener(image -> executor.execute(() -> {
+            try
+            {
+                BufferedImage img = ImageUtil.bufferedImageFromImage(image);
+                if (config.screenshotSidebar()) img = withWindow(img);
+                ApiModels.BoardResponse cb = currentBoard();
+                String kw = cb != null && cb.event != null ? cb.event.keyword : null;
+                java.time.ZonedDateTime taken = java.time.ZonedDateTime.now();
+                img = ScreenshotStamp.stamp(img, kw, taken);
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                if (!ImageIO.write(img, "png", out)) return;
+                ApiResult<ApiModels.ProofResponse> r = a.uploadTaskScreenshot(team, taskId, out.toByteArray(), kw,
+                    taken.withZoneSameInstant(java.time.ZoneOffset.UTC).toInstant().toString());
+                if (r.ok())
+                {
+                    notice("Screenshot sent for " + what + " - waiting for review.", true);
+                    boardVersions.clear();
+                    pollBoardSafely();
+                }
+                else if (r.status == 404 || "invalid_targets".equals(r.errorCode))
+                {
+                    notice("The server doesn't take plugin screenshots yet - add proof on the website for now.", true);
+                }
+                else if ("too_soon".equals(r.errorCode))
+                {
+                    notice("Screenshot already sent a moment ago.", true);
+                }
+                else
+                {
+                    notice("Screenshot not sent: " + r.describe(), true);
+                }
+            }
+            catch (Exception ex)
+            {
+                log.debug("screenshot proof failed", ex);
+                notice("Screenshot not sent: something went wrong taking it.", true);
+            }
+        }));
     }
 
     /** The bank PIN keypad (interface group 213) is showing. */

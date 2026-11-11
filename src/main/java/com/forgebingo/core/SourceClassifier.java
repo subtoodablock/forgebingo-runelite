@@ -13,6 +13,16 @@ public final class SourceClassifier
     {
     }
 
+    /**
+     * Loot that never counts (owner, 2026-11-11): Wilderness loot keys. Their chest just hands back items taken from
+     * other players, so it is neither a drop nor a task. RuneLite's loot tracker names it "Loot Chest".
+     */
+    public static boolean ignored(String name)
+    {
+        String n = name == null ? "" : name.toLowerCase(Locale.ROOT).trim();
+        return n.equals("loot chest") || n.contains("loot key");
+    }
+
     public static String forEventLoot(String name)
     {
         String n = name == null ? "" : name.toLowerCase(Locale.ROOT);

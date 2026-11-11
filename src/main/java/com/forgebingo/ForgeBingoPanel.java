@@ -478,6 +478,15 @@ class ForgeBingoPanel extends PluginPanel
                 detail.add(left(cardText("Sent, waiting for a reviewer", ColorScheme.PROGRESS_INPROGRESS_COLOR)));
             }
             if (!kDone) detail.add(left(cardText(trackingText(k), MUTED)));
+            if (!kDone && !TileInfo.isSecret(t) && k.id != null)
+            {
+                // RuneLite sends its own proof: a game screenshot straight to this task, waiting for review
+                JButton shot = button("Send screenshot as proof", "Takes a screenshot of the game now and sends it as proof for this task");
+                String what = k.description == null || k.description.isEmpty() ? TileInfo.shownTitle(t) : k.description;
+                shot.addActionListener(e -> plugin.sendScreenshotProof(k.id, what));
+                detail.add(gap(2));
+                detail.add(fullWidth(shot, 22));
+            }
             detail.add(gap(6));
         }
         JPanel buttons = new JPanel(new GridLayout(1, t.completed || t.id == null ? 1 : 2, 6, 0));

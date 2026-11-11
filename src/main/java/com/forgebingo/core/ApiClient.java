@@ -177,6 +177,20 @@ public final class ApiClient
         return execute(builder(url("v1", "boards", teamBoardId, "proofs")).post(body).build(), ApiModels.ProofResponse.class);
     }
 
+    /** POST /v1/boards/{team}/proofs with a taskId: a new pending submission for that task with this screenshot. */
+    public ApiResult<ApiModels.ProofResponse> uploadTaskScreenshot(String teamBoardId, String taskId, byte[] png, String stampKeyword, String capturedAt)
+    {
+        if (png.length > MAX_SCREENSHOT_BYTES)
+        {
+            return new ApiResult<>(413, null, "screenshot too large", "payload_too_large", null, 0);
+        }
+        MultipartBody.Builder mb = new MultipartBody.Builder().setType(MultipartBody.FORM).addFormDataPart("taskId", taskId);
+        if (stampKeyword != null && !stampKeyword.isEmpty()) mb.addFormDataPart("stampKeyword", stampKeyword.length() > 40 ? stampKeyword.substring(0, 40) : stampKeyword);
+        if (capturedAt != null && !capturedAt.isEmpty()) mb.addFormDataPart("capturedAt", capturedAt.length() > 40 ? capturedAt.substring(0, 40) : capturedAt);
+        RequestBody body = mb.addFormDataPart("file", "proof.png", RequestBody.create(MediaType.parse("image/png"), png)).build();
+        return execute(builder(url("v1", "boards", teamBoardId, "proofs")).post(body).build(), ApiModels.ProofResponse.class);
+    }
+
     /** Fetches an icon from the server's icon proxy. Returns null on any failure. */
     public byte[] icon(String proxyPath)
     {
