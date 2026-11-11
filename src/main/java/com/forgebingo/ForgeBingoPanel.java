@@ -6,16 +6,17 @@ import com.forgebingo.core.ConnectionStatus;
 import com.forgebingo.core.TileInfo;
 import java.awt.BorderLayout;
 import java.awt.Color;
-import java.awt.Dimension;
+import java.awt.Component;
 import java.awt.Cursor;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.GridLayout;
+import java.awt.Rectangle;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
-import java.util.ArrayDeque;
 import java.util.Collections;
-import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -26,19 +27,43 @@ import javax.swing.BoxLayout;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JProgressBar;
+import javax.swing.JScrollPane;
+import javax.swing.Scrollable;
+import javax.swing.SwingConstants;
+import javax.swing.border.Border;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.ui.ColorScheme;
+import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.PluginPanel;
 import net.runelite.client.util.AsyncBufferedImage;
 
-/** Sidebar. All methods must be called on the EDT (the plugin wraps calls in invokeLater). */
+/**
+ * Sidebar. All methods must be called on the EDT (the plugin wraps calls in invokeLater).
+ * Layout: one scrolling column of full-width, left-aligned cards. Every child of a BoxLayout column is
+ * left-aligned on purpose: mixing Swing's default alignments (labels left, buttons/combos centred) shifts
+ * the labels half a panel to the right and cuts their text off.
+ */
 class ForgeBingoPanel extends PluginPanel
 {
-    private static final int MAX_NOTICES = 8;
     private static final int ICON = 32;
+    private static final int PAD = 8;
+    /** room kept for the vertical scrollbar */
+    private static final int BAR = 8;
+    /** usable width inside the column */
+    private static final int INNER = PluginPanel.PANEL_WIDTH - 2 * PAD - BAR;
+    /** wrap width for text inside a card (card padding + accent stripe) */
+    private static final int CARD_TEXT = INNER - 22;
+    private static final Color CARD = ColorScheme.DARKER_GRAY_COLOR;
+    private static final Color CARD_HOVER = ColorScheme.DARKER_GRAY_HOVER_COLOR;
+    private static final Color MUTED = new Color(150, 150, 150);
+    private static final Color TEXT = new Color(220, 220, 220);
+    private static final Color ERROR = new Color(255, 112, 112);
+    private static final Color CLEAR = new Color(0, 0, 0, 0);
+
     /** square size for the current board (shrinks for big boards) */
     private int cell = ICON + 6;
 
@@ -46,22 +71,22 @@ class ForgeBingoPanel extends PluginPanel
     private final ApiClient api;
     private final JLabel status = new JLabel("Not connected");
     private final JLabel scope = new JLabel(" ");
-    /** Verified RSN / name mismatch / revoked key, one line per event (from POST /v1/hello). */
-    private final JPanel identity = new JPanel();
+    /** Verified RSN / name mismatch / revoked key, one card per line (from POST /v1/hello). */
+    private final JPanel identity = column();
     private final JLabel queueLabel = new JLabel(" ");
-    private final JLabel header = new JLabel(" ");
+    private final JLabel teamLabel = new JLabel(" ");
+    private final JLabel eventLabel = new JLabel(" ");
+    private final JProgressBar tilesBar = new JProgressBar();
+    private final JPanel boardCard = column();
     private final JComboBox<ApiModels.BoardSummary> boardBox = new JComboBox<>();
     private final JPanel grid = new JPanel();
-    private final JPanel standings = new JPanel();
-    private final JPanel notices = new JPanel();
+    private final JPanel gridWrap = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
     /** one tile, opened by clicking it on the grid: title, state, every task with its progress and how it is tracked */
-    private final JPanel detail = new JPanel();
-    private final JLabel progress = new JLabel(" ");
+    private final JPanel detail = column();
     /** the 3 open tiles closest to done, like the website's "What can I do next?" */
-    private final JPanel nextUp = new JPanel();
+    private final JPanel nextUp = column();
     private String selectedTileId;
     private final Map<String, JLabel> tileLabels = new ConcurrentHashMap<>();
-    private final Deque<String> noticeLog = new ArrayDeque<>();
     private final Map<String, ImageIcon> proxyIcons = new ConcurrentHashMap<>();
     private boolean updatingBox;
 
@@ -71,36 +96,51 @@ class ForgeBingoPanel extends PluginPanel
         this.plugin = plugin;
         this.api = api;
         setLayout(new BorderLayout());
-        setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+        setBorder(BorderFactory.createEmptyBorder());
+        setBackground(ColorScheme.DARK_GRAY_COLOR);
 
-        JPanel top = new JPanel();
-        top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
-        top.setOpaque(false);
-        top.add(status);
-        scope.setForeground(Color.GRAY);
-        top.add(scope);
-        identity.setLayout(new BoxLayout(identity, BoxLayout.Y_AXIS));
-        identity.setOpaque(false);
-        identity.setAlignmentX(LEFT_ALIGNMENT);
-        identity.add(wrapLabel("Log in to the game to check your RSN.", Color.GRAY));
-        top.add(identity);
-        top.add(queueLabel);
-        top.add(Box.createVerticalStrut(6));
-        top.add(boardBox);
-        top.add(Box.createVerticalStrut(6));
-        JButton refresh = new JButton("Refresh");
+        Column content = new Column();
+        content.setBorder(BorderFactory.createEmptyBorder(PAD, PAD, PAD, PAD));
+        content.setBackground(ColorScheme.DARK_GRAY_COLOR);
+        content.setOpaque(true);
+
+        // --- header card: name, connection, account, send queue
+        JPanel head = card(null);
+        JLabel title = new JLabel("ForgeBingo");
+        title.setFont(FontManager.getRunescapeBoldFont());
+        title.setForeground(ColorScheme.BRAND_ORANGE);
+        head.add(left(title));
+        head.add(Box.createVerticalStrut(2));
+        status.setFont(FontManager.getRunescapeSmallFont());
+        head.add(left(status));
+        scope.setFont(FontManager.getRunescapeSmallFont());
+        scope.setForeground(MUTED);
+        head.add(left(scope));
+        queueLabel.setFont(FontManager.getRunescapeSmallFont());
+        queueLabel.setForeground(MUTED);
+        head.add(left(queueLabel));
+        add(content, head);
+
+        identity.add(message("Log in to the game so we can check which character you're playing.", ConnectionStatus.Level.INFO));
+        add(content, gap(6));
+        add(content, identity);
+
+        // --- board picker and actions
+        add(content, gap(4));
+        add(content, section("Board"));
+        boardBox.setFocusable(false);
+        boardBox.setToolTipText("Pick which team board to show and send drops to");
+        add(content, fullWidth(boardBox, 26));
+        add(content, gap(6));
+        JPanel actions = new JPanel(new GridLayout(1, 2, 6, 0));
+        actions.setOpaque(false);
+        JButton refresh = button("Refresh", "Reload the board and leaderboard now");
         refresh.addActionListener(e -> plugin.refreshNow());
-        top.add(refresh);
-        top.add(Box.createVerticalStrut(4));
-        JButton showBoard = new JButton("Show board on screen");
-        showBoard.setToolTipText("Open the board over the game (click off it, press Esc or the hotkey to close)");
+        JButton showBoard = button("Show board", "Open the board over the game (click off it, press Esc or the hotkey to close)");
         showBoard.addActionListener(e -> plugin.toggleBoardOverlay());
-        top.add(showBoard);
-        top.add(Box.createVerticalStrut(6));
-        top.add(header);
-        progress.setForeground(Color.LIGHT_GRAY);
-        top.add(progress);
-        add(top, BorderLayout.NORTH);
+        actions.add(refresh);
+        actions.add(showBoard);
+        add(content, fullWidth(actions, 26));
 
         boardBox.addActionListener(e -> {
             if (updatingBox) return;
@@ -108,60 +148,85 @@ class ForgeBingoPanel extends PluginPanel
             if (sel instanceof ApiModels.BoardSummary) plugin.selectBoard(((ApiModels.BoardSummary) sel).teamBoardId);
         });
 
-        JPanel body = new JPanel();
-        body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
-        body.setOpaque(false);
-        body.add(grid);
-        body.add(Box.createVerticalStrut(6));
-        detail.setLayout(new BoxLayout(detail, BoxLayout.Y_AXIS));
+        // --- team + progress card (filled by setBoard)
+        teamLabel.setFont(FontManager.getRunescapeBoldFont());
+        teamLabel.setForeground(Color.WHITE);
+        eventLabel.setFont(FontManager.getRunescapeSmallFont());
+        eventLabel.setForeground(MUTED);
+        tilesBar.setStringPainted(true);
+        tilesBar.setFont(FontManager.getRunescapeSmallFont());
+        tilesBar.setForeground(ColorScheme.BRAND_ORANGE);
+        tilesBar.setBackground(ColorScheme.DARK_GRAY_COLOR);
+        tilesBar.setBorder(BorderFactory.createEmptyBorder());
+        boardCard.setBackground(CARD);
+        boardCard.setOpaque(true);
+        boardCard.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+        boardCard.add(left(teamLabel));
+        boardCard.add(left(eventLabel));
+        boardCard.add(Box.createVerticalStrut(6));
+        boardCard.add(fullWidth(tilesBar, 16));
+        boardCard.setVisible(false);
+        add(content, gap(10));
+        add(content, boardCard);
+
+        // --- grid, tile detail, next up
+        gridWrap.setOpaque(false);
+        grid.setOpaque(false);
+        gridWrap.add(grid);
+        add(content, gap(8));
+        add(content, gridWrap);
         detail.setOpaque(true);
-        detail.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-        detail.setBorder(BorderFactory.createEmptyBorder(6, 6, 6, 6));
+        detail.setBackground(CARD);
+        detail.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(0, 3, 0, 0, ColorScheme.BRAND_ORANGE),
+            BorderFactory.createEmptyBorder(8, 8, 8, 8)));
         detail.setVisible(false);
-        body.add(detail);
-        nextUp.setLayout(new BoxLayout(nextUp, BoxLayout.Y_AXIS));
-        nextUp.setOpaque(false);
-        body.add(Box.createVerticalStrut(6));
-        body.add(nextUp);
-        body.add(Box.createVerticalStrut(8));
-        body.add(section("Leaderboard"));
-        standings.setLayout(new BoxLayout(standings, BoxLayout.Y_AXIS));
-        standings.setOpaque(false);
-        body.add(standings);
-        body.add(Box.createVerticalStrut(8));
-        body.add(section("Notices"));
-        notices.setLayout(new BoxLayout(notices, BoxLayout.Y_AXIS));
-        notices.setOpaque(false);
-        body.add(notices);
-        add(body, BorderLayout.CENTER);
+        add(content, gap(6));
+        add(content, detail);
+        add(content, nextUp);
+        // no leaderboard or notices list here (owner, 2026-11-10): drops are announced in chat instead
+
+        JScrollPane scroll = new JScrollPane(content,
+            JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        scroll.setBorder(BorderFactory.createEmptyBorder());
+        scroll.getVerticalScrollBar().setPreferredSize(new Dimension(BAR, 0));
+        scroll.getVerticalScrollBar().setUnitIncrement(16);
+        scroll.getViewport().setBackground(ColorScheme.DARK_GRAY_COLOR);
+        add(scroll, BorderLayout.CENTER);
     }
 
-    private static JLabel section(String text)
+    /**
+     * Always exactly the sidebar's width. Without this, a long message made the panel ask for more room and
+     * RuneLite resized the game area to make space (the game looked like it zoomed after each drop).
+     */
+    @Override
+    public Dimension getPreferredSize()
     {
-        JLabel l = new JLabel(text);
-        l.setForeground(ColorScheme.BRAND_ORANGE);
-        return l;
+        return new Dimension(PluginPanel.PANEL_WIDTH, super.getPreferredSize().height);
     }
+
+    // ------------------------------------------------------------------ public API (called by the plugin)
 
     void setStatus(boolean ok, String text)
     {
-        status.setText(text);
+        status.setText(wrapHtml(text, INNER - 16));
         status.setForeground(ok ? ColorScheme.PROGRESS_COMPLETE_COLOR : ColorScheme.PROGRESS_ERROR_COLOR);
     }
 
     void setScope(String text)
     {
-        scope.setText(text == null || text.isEmpty() ? " " : text);
+        scope.setText(text == null || text.isEmpty() ? " " : wrapHtml(text, INNER - 16));
     }
 
     void setIdentity(List<ConnectionStatus.Line> lines)
     {
         identity.removeAll();
+        boolean first = true;
         for (ConnectionStatus.Line l : lines)
         {
-            Color c = l.level == ConnectionStatus.Level.OK ? ColorScheme.PROGRESS_COMPLETE_COLOR
-                : l.level == ConnectionStatus.Level.ERROR ? ColorScheme.PROGRESS_ERROR_COLOR : ColorScheme.PROGRESS_INPROGRESS_COLOR;
-            identity.add(wrapLabel(l.text, c));
+            if (!first) identity.add(gap(4));
+            identity.add(message(l.text, l.level));
+            first = false;
         }
         identity.revalidate();
         identity.repaint();
@@ -169,8 +234,9 @@ class ForgeBingoPanel extends PluginPanel
 
     void setQueueSize(int size, String lastError)
     {
-        queueLabel.setText(size == 0 ? "Nothing waiting to send"
-            : size + " waiting to send" + (lastError == null ? "" : " (" + lastError + ")"));
+        queueLabel.setText(wrapHtml(size == 0 ? "Nothing waiting to send"
+            : size + " waiting to send" + (lastError == null ? "" : " (" + lastError + ")"), INNER - 16));
+        queueLabel.setForeground(size == 0 ? MUTED : ColorScheme.PROGRESS_INPROGRESS_COLOR);
     }
 
     void setBoards(List<ApiModels.BoardSummary> boards, String activeId)
@@ -187,37 +253,33 @@ class ForgeBingoPanel extends PluginPanel
         updatingBox = false;
     }
 
+    /** Notices are shown in the game chat only (the sidebar list was removed); kept so callers stay simple. */
     void addNotice(String text)
     {
-        noticeLog.addFirst(text);
-        while (noticeLog.size() > MAX_NOTICES) noticeLog.removeLast();
-        notices.removeAll();
-        for (String n : noticeLog)
-        {
-            notices.add(wrapLabel(n, Color.LIGHT_GRAY));
-        }
-        notices.revalidate();
-        notices.repaint();
     }
 
     void setBoard(ApiModels.BoardResponse board, ApiModels.LeaderboardResponse leaderboard, ItemManager itemManager)
     {
-        StringBuilder h = new StringBuilder("<html>");
-        if (board.teamName != null) h.append(esc(board.teamName));
-        if (board.event != null && board.event.name != null) h.append(" - ").append(esc(board.event.name));
-        if (board.event != null && !board.event.active) h.append(" (not running)");
-        header.setText(h.append("</html>").toString());
+        teamLabel.setText(wrapHtml(board.teamName == null ? "Your team" : board.teamName, CARD_TEXT));
+        String ev = board.event != null && board.event.name != null ? board.event.name : "";
+        if (board.event != null && !board.event.active) ev += (ev.isEmpty() ? "" : " ") + "(not running)";
+        eventLabel.setText(ev.isEmpty() ? " " : wrapHtml(ev, CARD_TEXT));
 
         int size = board.size();
         // squares shrink to fit the sidebar on big boards (a 10x10 board would otherwise cut its icons off)
-        cell = Math.max(14, Math.min(ICON + 6, (PluginPanel.PANEL_WIDTH - 16 - 2 * (size - 1)) / Math.max(1, size)));
+        cell = Math.max(14, Math.min(ICON + 6, (INNER - 2 * (size - 1)) / Math.max(1, size)));
         int done = 0;
         for (ApiModels.Tile t : board.tiles) if (t.completed) done++;
-        progress.setText(done + " of " + board.tiles.size() + " tiles done" + (done == board.tiles.size() && !board.tiles.isEmpty() ? "  -  BLACKOUT!" : ""));
-        progress.setForeground(done == board.tiles.size() && !board.tiles.isEmpty() ? ColorScheme.PROGRESS_COMPLETE_COLOR : Color.LIGHT_GRAY);
+        int total = board.tiles.size();
+        boolean blackout = done == total && total > 0;
+        tilesBar.setMaximum(Math.max(1, total));
+        tilesBar.setValue(done);
+        tilesBar.setString(blackout ? "BLACKOUT! " + done + " / " + total : done + " / " + total + " tiles done");
+        tilesBar.setForeground(blackout ? ColorScheme.PROGRESS_COMPLETE_COLOR : ColorScheme.BRAND_ORANGE);
+        boardCard.setVisible(true);
+
         tileLabels.clear();
         grid.removeAll();
-        grid.setOpaque(false);
         grid.setLayout(new GridLayout(size, size, 2, 2));
         ApiModels.Tile[][] cells = new ApiModels.Tile[size][size];
         for (ApiModels.Tile t : board.tiles)
@@ -233,23 +295,20 @@ class ForgeBingoPanel extends PluginPanel
         }
         grid.revalidate();
         grid.repaint();
+
         nextUp.removeAll();
         List<ApiModels.Tile> next = TileInfo.nextUp(board.tiles, 3);
-        if (!next.isEmpty()) nextUp.add(wrapLabel("Closest to done:", ColorScheme.BRAND_ORANGE));
+        if (!next.isEmpty())
+        {
+            nextUp.add(gap(6));
+            nextUp.add(left(section("Closest to done")));
+        }
+        boolean firstNext = true;
         for (ApiModels.Tile t : next)
         {
-            String count = TileInfo.countText(t);
-            JLabel l = wrapLabel("- " + t.title + (count.isEmpty() ? "" : " (" + count + ")"), Color.LIGHT_GRAY);
-            l.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-            l.addMouseListener(new MouseAdapter()
-            {
-                @Override
-                public void mouseClicked(MouseEvent e)
-                {
-                    showTile(t);
-                }
-            });
-            nextUp.add(l);
+            if (!firstNext) nextUp.add(gap(4));
+            nextUp.add(nextUpRow(t));
+            firstNext = false;
         }
         nextUp.revalidate();
         nextUp.repaint();
@@ -260,20 +319,121 @@ class ForgeBingoPanel extends PluginPanel
             for (ApiModels.Tile t : board.tiles) if (selectedTileId.equals(t.id)) still = t;
             if (still != null) showTile(still); else closeTile();
         }
-
-        standings.removeAll();
-        if (leaderboard != null)
-        {
-            for (ApiModels.LeaderboardTeam t : leaderboard.teams)
-            {
-                String line = "#" + t.rank + " " + (t.teamName == null ? "?" : t.teamName) + " - " + t.score + " pts, "
-                    + t.tilesCompleted + " tiles";
-                standings.add(wrapLabel(line, t.isMyTeam ? ColorScheme.BRAND_ORANGE : Color.LIGHT_GRAY));
-            }
-        }
-        standings.revalidate();
-        standings.repaint();
     }
+
+    /** Opens one tile under the grid: what it is, where it stands, each task with its progress and how it is tracked. */
+    void showTile(ApiModels.Tile t)
+    {
+        String previous = selectedTileId;
+        selectedTileId = t.id;
+        if (previous != null && tileLabels.get(previous) != null) tileLabels.get(previous).setBorder(BorderFactory.createLineBorder(CLEAR, 2));
+        if (t.id != null && tileLabels.get(t.id) != null) tileLabels.get(t.id).setBorder(BorderFactory.createLineBorder(ColorScheme.BRAND_ORANGE, 2));
+        detail.removeAll();
+        JLabel title = new JLabel(wrapHtml(TileInfo.shownTitle(t), CARD_TEXT));
+        title.setFont(FontManager.getRunescapeBoldFont());
+        title.setForeground(ColorScheme.BRAND_ORANGE);
+        detail.add(left(title));
+        boolean secret = TileInfo.isSecret(t);
+        String state = stateText(t);
+        if (!secret) state += "  -  " + TileInfo.worth(t) + " pts";
+        if (!t.completed && "any".equals(t.completionMode) && t.tasks.size() > 1) state += " (any one finishes it)";
+        detail.add(left(cardText(state, stateTextColour(t))));
+        if (t.description != null && !t.description.isEmpty()) detail.add(left(cardText(t.description, MUTED)));
+        detail.add(gap(6));
+        for (ApiModels.Task k : t.tasks)
+        {
+            detail.add(left(cardText((k.completed ? "[x] " : "[ ] ") + k.description, k.completed ? ColorScheme.PROGRESS_COMPLETE_COLOR : Color.WHITE)));
+            if (k.requiredQty > 1)
+            {
+                JProgressBar bar = new JProgressBar(0, k.requiredQty);
+                bar.setValue(Math.min(k.requiredQty, k.approvedQty));
+                bar.setStringPainted(true);
+                bar.setFont(FontManager.getRunescapeSmallFont());
+                bar.setString(k.approvedQty + " / " + k.requiredQty + (k.pendingQty > 0 ? "  (+" + k.pendingQty + " pending)" : ""));
+                bar.setForeground(k.completed ? ColorScheme.PROGRESS_COMPLETE_COLOR : ColorScheme.BRAND_ORANGE);
+                bar.setBackground(ColorScheme.DARK_GRAY_COLOR);
+                bar.setBorder(BorderFactory.createEmptyBorder());
+                detail.add(gap(2));
+                detail.add(fullWidth(bar, 14));
+            }
+            else if (k.pendingQty > 0)
+            {
+                detail.add(left(cardText("Sent, waiting for a reviewer", ColorScheme.PROGRESS_INPROGRESS_COLOR)));
+            }
+            detail.add(left(cardText(trackingText(k), MUTED)));
+            detail.add(gap(6));
+        }
+        JButton back = button("Close", "Close this tile");
+        back.addActionListener(e -> closeTile());
+        detail.add(fullWidth(back, 24));
+        detail.setVisible(true);
+        detail.revalidate();
+        detail.repaint();
+    }
+
+    void closeTile()
+    {
+        if (selectedTileId != null && tileLabels.get(selectedTileId) != null) tileLabels.get(selectedTileId).setBorder(BorderFactory.createLineBorder(CLEAR, 2));
+        selectedTileId = null;
+        detail.setVisible(false);
+        detail.removeAll();
+        detail.revalidate();
+        detail.repaint();
+    }
+
+    // ------------------------------------------------------------------ shared with the board overlay
+
+    /** Where a tile stands, in the player's words (shared with the board overlay's tile card). */
+    static String stateText(ApiModels.Tile t)
+    {
+        boolean pending = TileInfo.waiting(t);
+        int doneTasks = 0;
+        for (ApiModels.Task k : t.tasks) if (k.completed) doneTasks++;
+        String reason = TileInfo.needsChangesReason(t);
+        return TileInfo.isSecret(t) && !t.completed ? "Secret tile: revealed later" : t.completed ? "Done" : reason != null ? "Needs changes: " + reason
+            : pending ? "Waiting for review" : t.tasks.isEmpty() ? "No tasks yet" : doneTasks + " of " + t.tasks.size() + " tasks done";
+    }
+
+    static Color stateTextColour(ApiModels.Tile t)
+    {
+        return t.completed ? ColorScheme.PROGRESS_COMPLETE_COLOR : TileInfo.needsChangesReason(t) != null ? ERROR
+            : TileInfo.waiting(t) ? ColorScheme.PROGRESS_INPROGRESS_COLOR : Color.LIGHT_GRAY;
+    }
+
+    /** How a task gets ticked off, in the player's words. */
+    static String trackingText(ApiModels.Task k)
+    {
+        String st = k.sourceType == null ? "manual" : k.sourceType;
+        switch (st)
+        {
+            case "npc": return "Counts by itself when RuneLite sees the drop";
+            case "raid_chest": return "Counts by itself when RuneLite sees the chest or raid loot";
+            case "clue": return "Counts by itself when RuneLite sees the casket";
+            case "collection_log": return "Counts by itself from your collection log";
+            case "pet": return "Counts by itself when the pet drops";
+            case "kc": return "Counts by itself from your kill count message";
+            case "level": return "Counts by itself when you level up";
+            case "wom_gain": return "Tracked by Wise Old Man (team total)";
+            default: return "Needs a screenshot or video: add proof on the website";
+        }
+    }
+
+    /** Square colours, matching the website: green done, yellow waiting, red needs changes, purple secret. */
+    static Color stateColour(TileInfo.State st)
+    {
+        switch (st)
+        {
+            case DONE: return new Color(30, 90, 30);
+            case WAITING: return new Color(110, 90, 20);
+            case NEEDS_CHANGES: return new Color(110, 35, 35);
+            case SECRET: return new Color(60, 35, 85);
+            case IN_PROGRESS: return new Color(45, 52, 60);
+            case EMPTY: return ColorScheme.DARK_GRAY_COLOR;
+            default: return ColorScheme.DARKER_GRAY_COLOR;
+        }
+    }
+
+    // ------------------------------------------------------------------ rows and cards
 
     private JLabel tileButton(ApiModels.Tile t, ItemManager itemManager)
     {
@@ -283,7 +443,7 @@ class ForgeBingoPanel extends PluginPanel
         l.setPreferredSize(new Dimension(cell, cell));
         if (t == null)
         {
-            l.setBackground(ColorScheme.DARK_GRAY_COLOR);
+            l.setBackground(ColorScheme.DARKER_GRAY_COLOR);
             return l;
         }
         TileInfo.State st = TileInfo.state(t);
@@ -307,7 +467,7 @@ class ForgeBingoPanel extends PluginPanel
         }
         l.setToolTipText(tip.append("</html>").toString());
         l.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        l.setBorder(BorderFactory.createLineBorder(t.id != null && t.id.equals(selectedTileId) ? ColorScheme.BRAND_ORANGE : new Color(0, 0, 0, 0), 2));
+        l.setBorder(BorderFactory.createLineBorder(t.id != null && t.id.equals(selectedTileId) ? ColorScheme.BRAND_ORANGE : CLEAR, 2));
         if (t.id != null) tileLabels.put(t.id, l);
         l.addMouseListener(new MouseAdapter()
         {
@@ -321,95 +481,178 @@ class ForgeBingoPanel extends PluginPanel
         return l;
     }
 
-    /** Opens one tile under the grid: what it is, where it stands, each task with its progress and how it is tracked. */
-    void showTile(ApiModels.Tile t)
+    /** One "closest to done" tile: a clickable card with the count on the right. */
+    private JPanel nextUpRow(ApiModels.Tile t)
     {
-        String previous = selectedTileId;
-        selectedTileId = t.id;
-        if (previous != null && tileLabels.get(previous) != null) tileLabels.get(previous).setBorder(BorderFactory.createLineBorder(new Color(0, 0, 0, 0), 2));
-        if (t.id != null && tileLabels.get(t.id) != null) tileLabels.get(t.id).setBorder(BorderFactory.createLineBorder(ColorScheme.BRAND_ORANGE, 2));
-        detail.removeAll();
-        JLabel title = new JLabel("<html><body style='width:170px'><b>" + esc(TileInfo.shownTitle(t)) + "</b></body></html>");
-        title.setForeground(ColorScheme.BRAND_ORANGE);
-        detail.add(title);
-        boolean secret = TileInfo.isSecret(t);
-        String state = stateText(t);
-        if (!secret) state += "  -  " + TileInfo.worth(t) + " pts";
-        if (!t.completed && "any".equals(t.completionMode) && t.tasks.size() > 1) state += " (any one finishes it)";
-        detail.add(wrapLabel(state, stateTextColour(t)));
-        if (t.description != null && !t.description.isEmpty()) detail.add(wrapLabel(t.description, Color.GRAY));
-        detail.add(Box.createVerticalStrut(4));
-        for (ApiModels.Task k : t.tasks)
+        JPanel row = new JPanel(new BorderLayout(6, 0));
+        row.setBackground(CARD);
+        row.setBorder(BorderFactory.createEmptyBorder(5, 8, 5, 8));
+        String count = TileInfo.countText(t);
+        JLabel countLabel = new JLabel(count);
+        countLabel.setFont(FontManager.getRunescapeSmallFont());
+        countLabel.setForeground(ColorScheme.BRAND_ORANGE);
+        int textW = CARD_TEXT - (count.isEmpty() ? 0 : countLabel.getPreferredSize().width + 6);
+        JLabel name = new JLabel(wrapHtml(t.title, Math.max(60, textW)));
+        name.setFont(FontManager.getRunescapeSmallFont());
+        name.setForeground(TEXT);
+        row.add(name, BorderLayout.CENTER);
+        if (!count.isEmpty()) row.add(countLabel, BorderLayout.EAST);
+        row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        row.setToolTipText("Open this tile");
+        hover(row, CARD, CARD_HOVER);
+        row.addMouseListener(new MouseAdapter()
         {
-            detail.add(wrapLabel((k.completed ? "[x] " : "[ ] ") + k.description, k.completed ? ColorScheme.PROGRESS_COMPLETE_COLOR : Color.WHITE));
-            if (k.requiredQty > 1)
+            @Override
+            public void mouseClicked(MouseEvent e)
             {
-                JProgressBar bar = new JProgressBar(0, k.requiredQty);
-                bar.setValue(Math.min(k.requiredQty, k.approvedQty));
-                bar.setStringPainted(true);
-                bar.setString(k.approvedQty + " / " + k.requiredQty + (k.pendingQty > 0 ? "  (+" + k.pendingQty + " pending)" : ""));
-                bar.setForeground(k.completed ? ColorScheme.PROGRESS_COMPLETE_COLOR : ColorScheme.BRAND_ORANGE);
-                bar.setAlignmentX(LEFT_ALIGNMENT);
-                detail.add(bar);
+                showTile(t);
             }
-            else if (k.pendingQty > 0)
-            {
-                detail.add(wrapLabel("Sent, waiting for a reviewer", ColorScheme.PROGRESS_INPROGRESS_COLOR));
-            }
-            detail.add(wrapLabel(trackingText(k), Color.GRAY));
-            detail.add(Box.createVerticalStrut(4));
-        }
-        JButton back = new JButton("Close");
-        back.addActionListener(e -> closeTile());
-        detail.add(back);
-        detail.setVisible(true);
-        detail.revalidate();
-        detail.repaint();
+        });
+        return fullWidth(row, -1);
     }
 
-    void closeTile()
+    /** A status message card with a coloured left edge (green ok, amber warning/info, red error). */
+    private static JPanel message(String text, ConnectionStatus.Level level)
     {
-        if (selectedTileId != null && tileLabels.get(selectedTileId) != null) tileLabels.get(selectedTileId).setBorder(BorderFactory.createLineBorder(new Color(0, 0, 0, 0), 2));
-        selectedTileId = null;
-        detail.setVisible(false);
-        detail.removeAll();
-        detail.revalidate();
-        detail.repaint();
+        Color edge = level == ConnectionStatus.Level.OK ? ColorScheme.PROGRESS_COMPLETE_COLOR
+            : level == ConnectionStatus.Level.ERROR ? ColorScheme.PROGRESS_ERROR_COLOR
+            : level == ConnectionStatus.Level.INFO ? ColorScheme.MEDIUM_GRAY_COLOR : ColorScheme.PROGRESS_INPROGRESS_COLOR;
+        Color fg = level == ConnectionStatus.Level.ERROR ? ERROR : TEXT;
+        JPanel p = new JPanel(new BorderLayout());
+        p.setBackground(level == ConnectionStatus.Level.ERROR ? new Color(58, 34, 34) : CARD);
+        p.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(0, 3, 0, 0, edge),
+            BorderFactory.createEmptyBorder(5, 7, 5, 7)));
+        JLabel l = new JLabel(wrapHtml(text, CARD_TEXT));
+        l.setFont(FontManager.getRunescapeSmallFont());
+        l.setForeground(fg);
+        p.add(l, BorderLayout.CENTER);
+        return fullWidth(p, -1);
     }
 
-    /** Where a tile stands, in the player's words (shared with the board overlay's tile card). */
-    static String stateText(ApiModels.Tile t)
+    private static JPanel card(Color edge)
     {
-        boolean pending = TileInfo.waiting(t);
-        int doneTasks = 0;
-        for (ApiModels.Task k : t.tasks) if (k.completed) doneTasks++;
-        String reason = TileInfo.needsChangesReason(t);
-        return TileInfo.isSecret(t) && !t.completed ? "Secret tile: revealed later" : t.completed ? "Done" : reason != null ? "Needs changes: " + reason
-            : pending ? "Waiting for review" : t.tasks.isEmpty() ? "No tasks yet" : doneTasks + " of " + t.tasks.size() + " tasks done";
+        JPanel p = column();
+        p.setOpaque(true);
+        p.setBackground(CARD);
+        Border pad = BorderFactory.createEmptyBorder(8, 8, 8, 8);
+        p.setBorder(edge == null ? pad : BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 3, 0, 0, edge), pad));
+        return p;
     }
 
-    static Color stateTextColour(ApiModels.Tile t)
+    private static JComponent section(String text)
     {
-        return t.completed ? ColorScheme.PROGRESS_COMPLETE_COLOR : TileInfo.needsChangesReason(t) != null ? new Color(255, 112, 112)
-            : TileInfo.waiting(t) ? ColorScheme.PROGRESS_INPROGRESS_COLOR : Color.LIGHT_GRAY;
+        JLabel l = new JLabel(text.toUpperCase());
+        l.setFont(FontManager.getRunescapeSmallFont());
+        l.setForeground(ColorScheme.BRAND_ORANGE);
+        JPanel p = new JPanel(new BorderLayout());
+        p.setOpaque(false);
+        p.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createEmptyBorder(4, 0, 4, 0),
+            BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 1, 0, ColorScheme.MEDIUM_GRAY_COLOR),
+                BorderFactory.createEmptyBorder(0, 0, 3, 0))));
+        p.add(l, BorderLayout.WEST);
+        return fullWidth(p, -1);
     }
 
-    /** How a task gets ticked off, in the player's words. */
-    static String trackingText(ApiModels.Task k)
+    private static JButton button(String text, String tip)
     {
-        String st = k.sourceType == null ? "manual" : k.sourceType;
-        switch (st)
+        JButton b = new JButton(text);
+        b.setFocusable(false);
+        b.setFont(FontManager.getRunescapeSmallFont());
+        b.setToolTipText(tip);
+        return b;
+    }
+
+    private static JLabel muted(String text)
+    {
+        JLabel l = new JLabel(wrapHtml(text, INNER - 4));
+        l.setFont(FontManager.getRunescapeSmallFont());
+        l.setForeground(MUTED);
+        return l;
+    }
+
+    private static JLabel cardText(String text, Color color)
+    {
+        JLabel l = new JLabel(wrapHtml(text, CARD_TEXT));
+        l.setFont(FontManager.getRunescapeSmallFont());
+        l.setForeground(color);
+        return l;
+    }
+
+    private static void hover(JPanel p, Color normal, Color over)
+    {
+        p.addMouseListener(new MouseAdapter()
         {
-            case "npc": return "Counts by itself when RuneLite sees the drop";
-            case "raid_chest": return "Counts by itself when RuneLite sees the chest or raid loot";
-            case "clue": return "Counts by itself when RuneLite sees the casket";
-            case "collection_log": return "Counts by itself from your collection log";
-            case "pet": return "Counts by itself when the pet drops";
-            case "kc": return "Counts by itself from your kill count message";
-            case "level": return "Counts by itself when you level up";
-            case "wom_gain": return "Tracked by Wise Old Man (team total)";
-            default: return "Needs a screenshot or video: add proof on the website";
-        }
+            @Override
+            public void mouseEntered(MouseEvent e)
+            {
+                p.setBackground(over);
+            }
+
+            @Override
+            public void mouseExited(MouseEvent e)
+            {
+                p.setBackground(normal);
+            }
+        });
+    }
+
+    // ------------------------------------------------------------------ layout helpers
+
+    private static JPanel column()
+    {
+        JPanel p = new JPanel();
+        p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
+        p.setOpaque(false);
+        p.setAlignmentX(LEFT_ALIGNMENT);
+        return p;
+    }
+
+    private static Component gap(int h)
+    {
+        Component c = Box.createVerticalStrut(h);
+        ((JComponent) c).setAlignmentX(LEFT_ALIGNMENT);
+        return c;
+    }
+
+    private static <T extends JComponent> T left(T c)
+    {
+        c.setAlignmentX(LEFT_ALIGNMENT);
+        return c;
+    }
+
+    /** Stretch to the column's width; height fixed (h > 0) or the component's own (h = -1). */
+    private static <T extends JComponent> T fullWidth(T c, int h)
+    {
+        c.setAlignmentX(LEFT_ALIGNMENT);
+        int height = h > 0 ? h : c.getPreferredSize().height;
+        if (h > 0) c.setPreferredSize(new Dimension(INNER, h));
+        c.setMaximumSize(new Dimension(Integer.MAX_VALUE, height));
+        return c;
+    }
+
+    private static void add(JPanel column, JComponent c)
+    {
+        c.setAlignmentX(LEFT_ALIGNMENT);
+        column.add(c);
+    }
+
+    private static void add(JPanel column, Component c)
+    {
+        if (c instanceof JComponent) ((JComponent) c).setAlignmentX(LEFT_ALIGNMENT);
+        column.add(c);
+    }
+
+    private static String wrapHtml(String text, int width)
+    {
+        return "<html><body style='width:" + width + "px'>" + esc(text).replace("\n", "<br>") + "</body></html>";
+    }
+
+    private static String esc(String s)
+    {
+        return s == null ? "" : s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     private void loadIcon(JLabel label, ApiModels.Tile tile, ItemManager itemManager)
@@ -450,30 +693,42 @@ class ForgeBingoPanel extends PluginPanel
         }
     }
 
-    /** Square colours, matching the website: green done, yellow waiting, red needs changes, purple secret. */
-    static Color stateColour(TileInfo.State st)
+    /** The scrolling column: always as wide as the sidebar, so text wraps instead of running off the edge. */
+    private static final class Column extends JPanel implements Scrollable
     {
-        switch (st)
+        Column()
         {
-            case DONE: return new Color(30, 90, 30);
-            case WAITING: return new Color(110, 90, 20);
-            case NEEDS_CHANGES: return new Color(110, 35, 35);
-            case SECRET: return new Color(60, 35, 85);
-            case IN_PROGRESS: return new Color(45, 52, 60);
-            case EMPTY: return ColorScheme.DARK_GRAY_COLOR;
-            default: return ColorScheme.DARKER_GRAY_COLOR;
+            setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
         }
-    }
 
-    private static JLabel wrapLabel(String text, Color color)
-    {
-        JLabel l = new JLabel("<html><body style='width:170px'>" + esc(text) + "</body></html>");
-        l.setForeground(color);
-        return l;
-    }
+        @Override
+        public Dimension getPreferredScrollableViewportSize()
+        {
+            return getPreferredSize();
+        }
 
-    private static String esc(String s)
-    {
-        return s == null ? "" : s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+        @Override
+        public int getScrollableUnitIncrement(Rectangle visibleRect, int orientation, int direction)
+        {
+            return 16;
+        }
+
+        @Override
+        public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation, int direction)
+        {
+            return Math.max(16, visibleRect.height - 32);
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportWidth()
+        {
+            return true;
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportHeight()
+        {
+            return false;
+        }
     }
 }

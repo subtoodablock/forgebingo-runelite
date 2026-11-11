@@ -1,5 +1,6 @@
 package com.forgebingo;
 
+import java.awt.Color;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import net.runelite.client.config.Keybind;
@@ -142,7 +143,16 @@ public interface ForgeBingoConfig extends Config
         return true;
     }
 
-    @ConfigSection(name = "Board overlay", description = "The bingo board drawn over the game", position = 6)
+    @ConfigItem(keyName = "chatColor", name = "Chat text colour", description = "Colour of ForgeBingo's game messages",
+        position = 6)
+    default Color chatColor()
+    {
+        return DEFAULT_CHAT_COLOR;
+    }
+
+    Color DEFAULT_CHAT_COLOR = new Color(0x0dc10d);
+
+    @ConfigSection(name = "Board overlay", description = "The bingo board drawn over the game", position = 7)
     String boardOverlay = "boardOverlay";
 
     @ConfigItem(keyName = "boardOverlayKey", name = "Show board on screen",

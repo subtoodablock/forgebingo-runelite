@@ -96,9 +96,9 @@ public class ConnectionStatusTest
         assertEquals(ErrorClass.AUTH, r.errorClass());
         assertEquals("api_key_revoked", r.errorCode);
         String msg = ConnectionStatus.authMessage(r.errorCode);
-        assertTrue(msg, msg.contains("revoked"));
+        assertTrue(msg, msg.contains("stopped working"));
         assertTrue(msg, msg.contains("Connect RuneLite"));
-        assertTrue(ConnectionStatus.authMessage("invalid_api_key").contains("not recognised"));
+        assertTrue(ConnectionStatus.authMessage("invalid_api_key").contains("wasn't recognised"));
     }
 
     @Test
@@ -106,7 +106,19 @@ public class ConnectionStatusTest
     {
         ConnectionStatus.Line l = ConnectionStatus.line(m("verified", "Gus", "Gus"));
         assertEquals(ConnectionStatus.Level.OK, l.level);
-        assertEquals("Verified as Gus - Forge Bingo / Wolves", l.text);
+        assertEquals("Tracking drops as Gus for Wolves (Forge Bingo).", l.text);
+    }
+
+    @Test
+    public void verifiedBoardsShareOneCard()
+    {
+        ApiModels.HelloResponse r = new ApiModels.HelloResponse();
+        r.memberships = new java.util.ArrayList<>(java.util.Arrays.asList(m("verified", "Gus", "Gus"), m("verified", "Gus", "Gus"),
+            m("rsn_mismatch", "Zezima", "Gus")));
+        List<ConnectionStatus.Line> lines = ConnectionStatus.fromHello(r);
+        assertEquals(2, lines.size());
+        assertEquals("Tracking drops as Gus for:\n- Wolves (Forge Bingo)\n- Wolves (Forge Bingo)", lines.get(0).text);
+        assertEquals(ConnectionStatus.Level.ERROR, lines.get(1).level);
     }
 
     @Test
@@ -114,9 +126,9 @@ public class ConnectionStatusTest
     {
         ConnectionStatus.Line l = ConnectionStatus.line(m("rsn_mismatch", "Zezima", "Griefer"));
         assertEquals(ConnectionStatus.Level.ERROR, l.level);
-        assertTrue(l.text, l.text.startsWith("RuneLite says you're logged in as Griefer, but you joined Forge Bingo / Wolves as Zezima."));
-        assertTrue(l.text, l.text.contains("Fix your name"));
-        assertTrue(l.text, l.text.contains("wait for review"));
+        assertTrue(l.text, l.text.startsWith("Name doesn't match on Wolves (Forge Bingo): you're playing as Griefer, but the team has you down as Zezima."));
+        assertTrue(l.text, l.text.contains("change your name to Griefer"));
+        assertTrue(l.text, l.text.contains("reviewer has to approve"));
     }
 
     @Test
@@ -148,9 +160,9 @@ public class ConnectionStatusTest
         ApiModels.Me me = client.me().body;
         assertEquals("event", me.keyScope);
         assertEquals("e1", me.eventId);
-        assertEquals("Player key (one event)", ConnectionStatus.keyScope(me));
+        assertEquals("This key works for one event", ConnectionStatus.keyScope(me));
         me.keyScope = "account";
-        assertEquals("Account key (all your events)", ConnectionStatus.keyScope(me));
+        assertEquals("This key works for all your events", ConnectionStatus.keyScope(me));
     }
 
     @Test

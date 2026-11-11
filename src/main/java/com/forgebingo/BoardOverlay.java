@@ -6,6 +6,7 @@ import com.forgebingo.core.TileInfo;
 import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.Color;
+import java.awt.Composite;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.FontMetrics;
@@ -21,30 +22,44 @@ import java.util.concurrent.ConcurrentHashMap;
 import javax.inject.Inject;
 import net.runelite.api.Client;
 import net.runelite.client.game.ItemManager;
+import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.overlay.Overlay;
 import net.runelite.client.ui.overlay.OverlayLayer;
 import net.runelite.client.ui.overlay.OverlayPosition;
 
 /**
- * The bingo board drawn over the game (owner request, 2026-11-07). Toggled by the hotkey or the panel button; a
- * clicked tile pops open into a card; clicking off the board, Esc or taking a hit closes it, and the open tile is
- * remembered for next time. Drawn on the client thread; opened, closed and clicked from the AWT / Swing threads, so
- * all shared state is volatile and the board is the plugin's immutable-by-convention snapshot (never fetched here).
+ * The bingo board drawn over the game (owner request, 2026-11-07; polished 2026-11-10). Toggled by the hotkey or the
+ * panel button; a clicked tile pops open into a card sized to its content; clicking off the board, Esc or taking a hit
+ * closes it, and the open tile is remembered for next time. Hovering a tile fades in a highlight and a name label.
+ * Text uses RuneLite's own pixel fonts with antialiasing off, so it stays sharp like the game's interfaces.
+ * Drawn on the client thread; opened, closed and clicked from the AWT / Swing threads, so all shared state is
+ * volatile and the board is the plugin's immutable-by-convention snapshot (never fetched here).
  */
 public class BoardOverlay extends Overlay
 {
-    static final long FADE_MS = 150;
-    static final long POP_MS = 180;
+    static final long FADE_MS = 160;
+    static final long POP_MS = 200;
+    /** hover highlight fade */
+    static final long HOVER_MS = 110;
+    /** opening cascade: each diagonal of cells starts this much after the previous one */
+    static final long CASCADE_STEP_MS = 9;
+    static final long CASCADE_CELL_MS = 170;
 
-    private static final Color GOLD = new Color(0xffbf1f);
-    private static final Color GOLD_DIM = new Color(0x8a6a1a);
-    private static final Color STONE_TOP = new Color(0x2b2724);
-    private static final Color STONE_BOTTOM = new Color(0x1a1714);
-    private static final Color CARD_BG = new Color(0x221e1b);
-    private static final Color DONE_TICK = new Color(0x7dff7d);
-    private static final Color BAR_BG = new Color(0, 0, 0, 150);
+    private static final Color GOLD = new Color(0xffb83f);
+    private static final Color GOLD_DIM = new Color(0x7a5c22);
+    private static final Color GOLD_EDGE = new Color(0x5a4420);
+    private static final Color STONE_TOP = new Color(0x2e2925);
+    private static final Color STONE_BOTTOM = new Color(0x1b1815);
+    private static final Color CARD_TOP = new Color(0x2a2521);
+    private static final Color CARD_BOTTOM = new Color(0x1e1a17);
+    private static final Color TEXT = new Color(0xe8e0d0);
+    private static final Color MUTED = new Color(0x9a9083);
+    private static final Color SHADOW = new Color(0, 0, 0, 220);
+    private static final Color DONE_TICK = new Color(0x6ee06e);
+    private static final Color BAR_BG = new Color(0, 0, 0, 160);
     private static final Color BAR_FILL = new Color(0xff981f);
-    private static final Color BAR_DONE = new Color(0x5cc85c);
+    private static final Color BAR_DONE = new Color(0x4fbf4f);
+    private static final Color PENDING = new Color(0xffd83d);
 
     private final Client client;
     private final ItemManager itemManager;
@@ -56,12 +71,17 @@ public class BoardOverlay extends Overlay
     private volatile boolean open;
     /** when the overlay last opened or closed, for the fade */
     private volatile long fadeAt;
+    /** play the tile cascade for this opening (not when reopening onto a remembered card) */
+    private volatile boolean cascade;
     /** the tile whose card is open (kept when the overlay closes, so reopening returns to it) */
     private volatile String selectedTileId;
     /** when the card started popping open; 0 = show it fully open straight away */
     private volatile long cardAt;
     /** index (row * size + col) of the cell under the mouse, or -1 */
     private volatile int hover = -1;
+    /** the cell the mouse just left (its highlight fades out) and when the hover last changed */
+    private volatile int hoverPrev = -1;
+    private volatile long hoverAt;
     private volatile BoardLayout layout;
 
     @Inject
@@ -92,8 +112,10 @@ public class BoardOverlay extends Overlay
     {
         if (open) return;
         hover = -1;
+        hoverPrev = -1;
         // the remembered tile comes back without its pop (the board fade is enough)
         cardAt = 0;
+        cascade = selectedTileId == null;
         fadeAt = System.currentTimeMillis();
         open = true;
     }
@@ -104,6 +126,7 @@ public class BoardOverlay extends Overlay
         fadeAt = System.currentTimeMillis();
         open = false;
         hover = -1;
+        hoverPrev = -1;
     }
 
     /** Plugin shutdown: forget everything. */
@@ -113,13 +136,20 @@ public class BoardOverlay extends Overlay
         fadeAt = 0;
         selectedTileId = null;
         hover = -1;
+        hoverPrev = -1;
         icons.clear();
     }
 
     void hover(int x, int y)
     {
         BoardLayout l = layout();
-        hover = l == null ? -1 : l.cellAt(x, y);
+        int next = l == null ? -1 : l.cellAt(x, y);
+        if (next != hover)
+        {
+            hoverPrev = hover;
+            hoverAt = System.currentTimeMillis();
+            hover = next;
+        }
     }
 
     boolean cardOpen()
@@ -225,17 +255,20 @@ public class BoardOverlay extends Overlay
         }
         if (alpha <= 0.01f) return null;
 
-        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
         int w = client.getCanvasWidth();
         int h = client.getCanvasHeight();
         Graphics2D g2 = (Graphics2D) g.create();
         try
         {
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+            g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            g2.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            // pixel fonts: no smoothing, so every letter lands on whole pixels like the game's own text
+            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
             g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
             // dim the game a little so the board reads, without hiding what is going on
-            g2.setColor(new Color(0, 0, 0, 90));
+            g2.setColor(new Color(0, 0, 0, 100));
             g2.fillRect(0, 0, w, h);
 
             ApiModels.BoardResponse board = plugin.currentBoard();
@@ -246,11 +279,12 @@ public class BoardOverlay extends Overlay
                 return null;
             }
             ApiModels.Tile selected = selectedTile(board);
-            drawBoard(g2, board, l, selected == null && isOpen ? hover : -1, selected);
+            long sinceOpen = isOpen && anim && cascade ? now - fadeAt : Long.MAX_VALUE;
+            drawBoard(g2, board, l, selected == null && isOpen, selected, now, anim, sinceOpen, alpha);
             if (selected != null)
             {
                 double t = cardAt == 0 || !anim ? 1 : (now - cardAt) / (double) POP_MS;
-                drawCard(g2, l, selected, BoardLayout.easeOut(t), alpha);
+                drawCard(g2, l, selected, t, alpha);
             }
         }
         finally
@@ -263,66 +297,73 @@ public class BoardOverlay extends Overlay
     private void drawNoBoard(Graphics2D g, int w, int h)
     {
         Rectangle m = BoardLayout.message(w, h);
-        stonePanel(g, m);
-        g.setFont(new Font("SansSerif", Font.BOLD, 13));
-        FontMetrics fm = g.getFontMetrics();
-        String a = "No bingo board yet:";
-        String b = "connect in the ForgeBingo panel";
-        g.setColor(GOLD);
-        g.drawString(a, m.x + (m.width - fm.stringWidth(a)) / 2, m.y + m.height / 2 - 4);
-        g.setFont(new Font("SansSerif", Font.PLAIN, 12));
-        fm = g.getFontMetrics();
-        g.setColor(Color.LIGHT_GRAY);
-        g.drawString(b, m.x + (m.width - fm.stringWidth(b)) / 2, m.y + m.height / 2 + fm.getAscent());
+        panel(g, m, 14);
+        text(g, FontManager.getRunescapeBoldFont(), "No bingo board yet", GOLD, m.x + m.width / 2, m.y + m.height / 2 - 2, true);
+        text(g, FontManager.getRunescapeSmallFont(), "Connect in the ForgeBingo side panel", MUTED, m.x + m.width / 2, m.y + m.height / 2 + 14, true);
     }
 
-    private static void stonePanel(Graphics2D g, Rectangle r)
+    /** Dark stone panel with a soft drop shadow, a thin gold rim and a faint inner bevel. */
+    private static void panel(Graphics2D g, Rectangle r, int arc)
     {
-        g.setColor(new Color(0, 0, 0, 120));
-        g.fillRoundRect(r.x + 4, r.y + 5, r.width, r.height, 16, 16);
+        for (int i = 3; i >= 1; i--)
+        {
+            g.setColor(new Color(0, 0, 0, 40));
+            g.fillRoundRect(r.x - i + 2, r.y - i + 4, r.width + 2 * i, r.height + 2 * i, arc + 2 * i, arc + 2 * i);
+        }
         g.setPaint(new GradientPaint(r.x, r.y, STONE_TOP, r.x, r.y + r.height, STONE_BOTTOM));
-        g.fillRoundRect(r.x, r.y, r.width, r.height, 16, 16);
-        g.setStroke(new BasicStroke(2f));
+        g.fillRoundRect(r.x, r.y, r.width, r.height, arc, arc);
+        g.setStroke(new BasicStroke(1f));
+        g.setColor(Color.BLACK);
+        g.drawRoundRect(r.x, r.y, r.width - 1, r.height - 1, arc, arc);
         g.setColor(GOLD_DIM);
-        g.drawRoundRect(r.x, r.y, r.width - 1, r.height - 1, 16, 16);
-        g.setColor(new Color(255, 255, 255, 18));
-        g.drawRoundRect(r.x + 3, r.y + 3, r.width - 7, r.height - 7, 12, 12);
+        g.drawRoundRect(r.x + 1, r.y + 1, r.width - 3, r.height - 3, arc - 2, arc - 2);
+        g.setColor(new Color(255, 255, 255, 14));
+        g.drawLine(r.x + arc / 2, r.y + 2, r.x + r.width - arc / 2, r.y + 2);
     }
 
-    private void drawBoard(Graphics2D g, ApiModels.BoardResponse board, BoardLayout l, int hoverIdx, ApiModels.Tile selected)
+    private void drawBoard(Graphics2D g, ApiModels.BoardResponse board, BoardLayout l, boolean hoverable, ApiModels.Tile selected,
+        long now, boolean anim, long sinceOpen, float boardAlpha)
     {
         Rectangle b = l.board();
-        stonePanel(g, b);
+        panel(g, b, 12);
 
-        // header: "<team> - <bingo name>" and "X of Y tiles done"
+        // header: team (gold) + bingo name (muted), the count on the right, a thin progress line underneath
         String name = board.event != null && board.event.name != null ? board.event.name : board.board != null && board.board.title != null ? board.board.title : "Bingo";
-        String title = board.teamName == null ? name : board.teamName + " - " + name;
+        if (board.event != null && !board.event.active) name += " (not running)";
         int total = board.tiles == null ? 0 : board.tiles.size();
         int done = 0;
         if (board.tiles != null) for (ApiModels.Tile t : board.tiles) if (t != null && t.completed) done++;
-        String sub = done + " of " + total + " tiles done" + (done == total && total > 0 ? "  -  BLACKOUT!" : "");
-        int textW = b.width - 2 * BoardLayout.PAD - BoardLayout.CLOSE - 6;
-        g.setFont(new Font("Serif", Font.BOLD, 17));
-        String shownTitle = ellipsize(g.getFontMetrics(), title, textW);
-        g.setColor(new Color(0, 0, 0, 200));
-        g.drawString(shownTitle, b.x + BoardLayout.PAD + 1, b.y + BoardLayout.PAD + 15);
-        g.setColor(GOLD);
-        g.drawString(shownTitle, b.x + BoardLayout.PAD, b.y + BoardLayout.PAD + 14);
-        g.setFont(new Font("SansSerif", Font.PLAIN, 11));
-        g.setColor(done == total && total > 0 ? DONE_TICK : Color.LIGHT_GRAY);
-        g.drawString(ellipsize(g.getFontMetrics(), sub, textW), b.x + BoardLayout.PAD, b.y + BoardLayout.PAD + 30);
+        boolean blackout = done == total && total > 0;
 
-        // close button
-        Rectangle c = l.closeButton();
-        g.setColor(new Color(0, 0, 0, 120));
-        g.fillRoundRect(c.x, c.y, c.width, c.height, 6, 6);
-        g.setColor(GOLD_DIM);
-        g.setStroke(new BasicStroke(1.5f));
-        g.drawRoundRect(c.x, c.y, c.width - 1, c.height - 1, 6, 6);
-        g.setColor(GOLD);
-        g.setStroke(new BasicStroke(2f));
-        g.drawLine(c.x + 6, c.y + 6, c.x + c.width - 7, c.y + c.height - 7);
-        g.drawLine(c.x + c.width - 7, c.y + 6, c.x + 6, c.y + c.height - 7);
+        int x = b.x + BoardLayout.PAD;
+        int right = l.closeButton().x - 8;
+        Font bold = FontManager.getRunescapeBoldFont();
+        Font small = FontManager.getRunescapeSmallFont();
+        String count = blackout ? "BLACKOUT!" : done + " / " + total;
+        g.setFont(bold);
+        int countW = g.getFontMetrics().stringWidth(count);
+        String team = board.teamName == null ? name : board.teamName;
+        text(g, bold, ellipsize(g.getFontMetrics(), team, right - x - countW - 10), GOLD, x, b.y + BoardLayout.PAD + 12, false);
+        text(g, bold, count, blackout ? DONE_TICK : TEXT, right - countW, b.y + BoardLayout.PAD + 12, false);
+        if (board.teamName != null)
+        {
+            g.setFont(small);
+            text(g, small, ellipsize(g.getFontMetrics(), name, right - x), MUTED, x, b.y + BoardLayout.PAD + 25, false);
+        }
+        // progress line across the header
+        int lineY = b.y + BoardLayout.HEADER + BoardLayout.PAD - 9;
+        int lineW = b.width - 2 * BoardLayout.PAD;
+        g.setColor(BAR_BG);
+        g.fillRoundRect(x, lineY, lineW, 4, 4, 4);
+        double p = total == 0 ? 0 : done / (double) total;
+        int fillW = (int) Math.round(lineW * p);
+        if (fillW > 0)
+        {
+            g.setPaint(new GradientPaint(x, lineY, blackout ? BAR_DONE.brighter() : GOLD, x, lineY + 4, blackout ? BAR_DONE : BAR_FILL));
+            g.fillRoundRect(x, lineY, Math.max(4, fillW), 4, 4, 4);
+        }
+
+        drawCloseButton(g, l.closeButton(), false);
 
         ApiModels.Tile[][] cells = new ApiModels.Tile[l.size][l.size];
         if (board.tiles != null)
@@ -332,48 +373,100 @@ public class BoardOverlay extends Overlay
                 if (t != null && t.row >= 0 && t.col >= 0 && t.row < l.size && t.col < l.size) cells[t.row][t.col] = t;
             }
         }
+        int hov = hoverable ? hover : -1;
+        int prev = hoverable ? hoverPrev : -1;
+        double hoverIn = anim ? BoardLayout.easeOut((now - hoverAt) / (double) HOVER_MS) : 1;
+        Composite base = g.getComposite();
         for (int r = 0; r < l.size; r++)
         {
             for (int col = 0; col < l.size; col++)
             {
                 ApiModels.Tile t = cells[r][col];
-                boolean hot = hoverIdx == r * l.size + col && t != null;
-                drawCell(g, l.cell(r, col), t, hot, t != null && selected != null && t == selected);
+                int idx = r * l.size + col;
+                double glow = t == null ? 0 : idx == hov ? hoverIn : idx == prev ? 1 - hoverIn : 0;
+                double appear = 1;
+                if (sinceOpen != Long.MAX_VALUE)
+                {
+                    long local = sinceOpen - (r + col) * CASCADE_STEP_MS;
+                    appear = BoardLayout.easeOut(local / (double) CASCADE_CELL_MS);
+                    if (appear <= 0) continue;
+                }
+                Rectangle cell = l.cell(r, col);
+                if (appear < 1)
+                {
+                    g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (boardAlpha * appear)));
+                    int shrink = (int) Math.round((1 - appear) * cell.width * 0.18);
+                    cell = new Rectangle(cell.x + shrink, cell.y + shrink, cell.width - 2 * shrink, cell.height - 2 * shrink);
+                }
+                drawCell(g, cell, t, glow, t != null && selected != null && t == selected);
+                if (appear < 1) g.setComposite(base);
             }
+        }
+        if (sinceOpen != Long.MAX_VALUE && sinceOpen > (2L * l.size) * CASCADE_STEP_MS + CASCADE_CELL_MS) cascade = false;
+
+        // name label over the hovered tile
+        if (hov >= 0 && selected == null)
+        {
+            ApiModels.Tile t = cells[hov / l.size][hov % l.size];
+            if (t != null) drawHoverLabel(g, l, l.cell(hov / l.size, hov % l.size), t, hoverIn, boardAlpha);
         }
     }
 
-    private void drawCell(Graphics2D g, Rectangle r, ApiModels.Tile t, boolean hot, boolean selected)
+    private static void drawCloseButton(Graphics2D g, Rectangle c, boolean hot)
     {
-        int arc = Math.max(4, r.width / 5);
+        g.setColor(new Color(0, 0, 0, 130));
+        g.fillRoundRect(c.x, c.y, c.width, c.height, 6, 6);
+        g.setStroke(new BasicStroke(1f));
+        g.setColor(GOLD_DIM);
+        g.drawRoundRect(c.x, c.y, c.width - 1, c.height - 1, 6, 6);
+        g.setColor(hot ? Color.WHITE : GOLD);
+        g.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        int in = Math.max(5, c.width / 3);
+        g.drawLine(c.x + in, c.y + in, c.x + c.width - in - 1, c.y + c.height - in - 1);
+        g.drawLine(c.x + c.width - in - 1, c.y + in, c.x + in, c.y + c.height - in - 1);
+    }
+
+    private void drawCell(Graphics2D g, Rectangle r, ApiModels.Tile t, double glow, boolean selected)
+    {
+        int arc = Math.max(4, Math.min(10, r.width / 5));
         TileInfo.State st = TileInfo.state(t);
         Color base = ForgeBingoPanel.stateColour(st);
-        if (hot) base = base.brighter();
-        g.setPaint(new GradientPaint(r.x, r.y, lighten(base, 18), r.x, r.y + r.height, base));
+        if (glow > 0) base = mix(base, lighten(base, 34), glow);
+        g.setPaint(new GradientPaint(r.x, r.y, lighten(base, 16), r.x, r.y + r.height, darken(base, 6)));
         g.fillRoundRect(r.x, r.y, r.width, r.height, arc, arc);
+        // crisp edge: dark outline + a 1px top highlight
         g.setStroke(new BasicStroke(1f));
-        g.setColor(new Color(0, 0, 0, 140));
+        g.setColor(new Color(0, 0, 0, 170));
         g.drawRoundRect(r.x, r.y, r.width - 1, r.height - 1, arc, arc);
+        g.setColor(new Color(255, 255, 255, 22));
+        g.drawLine(r.x + arc / 2, r.y + 1, r.x + r.width - arc / 2 - 1, r.y + 1);
         if (t == null) return;
 
         if (st == TileInfo.State.SECRET)
         {
-            centredText(g, r, "?", new Font("Serif", Font.BOLD, Math.max(10, (int) (r.height * 0.62))), new Color(255, 215, 90));
+            Font f = r.height >= 26 ? FontManager.getRunescapeBoldFont() : FontManager.getRunescapeSmallFont();
+            text(g, f, "?", new Color(255, 215, 90), r.x + r.width / 2, r.y + r.height / 2 + g.getFontMetrics(f).getAscent() / 2 - 1, true);
         }
         else
         {
             BufferedImage img = t.iconItemId != null ? icon(t.iconItemId) : null;
             if (img != null && img.getWidth() > 1)
             {
-                // keep the item sprite's shape, sized to ~72% of the cell
-                double s = r.width * 0.72 / Math.max(img.getWidth(), img.getHeight());
-                int iw = Math.max(1, (int) (img.getWidth() * s));
-                int ih = Math.max(1, (int) (img.getHeight() * s));
+                // keep the item sprite's shape; draw at whole-pixel steps when it fits, so it stays sharp
+                double fit = r.width * 0.74 / Math.max(img.getWidth(), img.getHeight());
+                double s = fit >= 1 ? Math.floor(fit * 2) / 2 : fit;
+                int iw = Math.max(1, (int) Math.round(img.getWidth() * s));
+                int ih = Math.max(1, (int) Math.round(img.getHeight() * s));
+                Object interp = g.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+                if (s >= 1) g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
                 g.drawImage(img, r.x + (r.width - iw) / 2, r.y + (r.height - ih) / 2, iw, ih, null);
+                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, interp);
             }
             else
             {
-                centredText(g, r, initials(t.title), new Font("SansSerif", Font.BOLD, Math.max(8, (int) (r.height * 0.32))), new Color(235, 225, 205));
+                Font f = r.height >= 26 ? FontManager.getRunescapeBoldFont() : FontManager.getRunescapeSmallFont();
+                FontMetrics fm = g.getFontMetrics(f);
+                text(g, f, initials(t.title), new Color(235, 225, 205), r.x + r.width / 2, r.y + (r.height + fm.getAscent()) / 2 - 2, true);
             }
         }
 
@@ -383,154 +476,261 @@ public class BoardOverlay extends Overlay
             double p = TileInfo.progress(t);
             if (p > 0 && r.height >= 14)
             {
-                int bh = Math.max(3, r.height / 10);
-                int bx = r.x + 3;
-                int bw = r.width - 6;
-                int by = r.y + r.height - bh - 3;
+                int bh = Math.max(3, r.height / 11);
+                int bx = r.x + 4;
+                int bw = r.width - 8;
+                int by = r.y + r.height - bh - 4;
                 g.setColor(BAR_BG);
-                g.fillRect(bx, by, bw, bh);
+                g.fillRoundRect(bx, by, bw, bh, bh, bh);
                 g.setColor(BAR_FILL);
-                g.fillRect(bx, by, (int) Math.round(bw * Math.min(1, p)), bh);
+                g.fillRoundRect(bx, by, Math.max(bh, (int) Math.round(bw * Math.min(1, p))), bh, bh, bh);
             }
         }
 
-        if (hot || selected)
+        if (glow > 0 || selected)
         {
-            g.setStroke(new BasicStroke(2f));
-            g.setColor(GOLD);
+            float a = selected ? 1f : (float) glow;
+            g.setStroke(new BasicStroke(1.5f));
+            g.setColor(new Color(GOLD.getRed(), GOLD.getGreen(), GOLD.getBlue(), Math.round(255 * a)));
             g.drawRoundRect(r.x + 1, r.y + 1, r.width - 3, r.height - 3, arc, arc);
         }
     }
 
     private static void drawTick(Graphics2D g, Rectangle r)
     {
-        int s = Math.max(8, r.width * 2 / 5);
+        int s = Math.max(9, Math.min(16, r.width * 2 / 5));
         int x = r.x + r.width - s - 2;
         int y = r.y + 2;
-        g.setColor(new Color(0, 0, 0, 150));
+        g.setColor(new Color(0x1d4a1d));
         g.fillOval(x, y, s, s);
+        g.setStroke(new BasicStroke(1f));
+        g.setColor(new Color(0, 0, 0, 160));
+        g.drawOval(x, y, s - 1, s - 1);
         g.setColor(DONE_TICK);
         g.setStroke(new BasicStroke(Math.max(1.5f, s / 7f), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g.drawPolyline(new int[] {x + s / 4, x + s * 5 / 12, x + s * 3 / 4}, new int[] {y + s / 2, y + s * 2 / 3, y + s / 3}, 3);
+        g.drawPolyline(new int[] {x + s * 3 / 11, x + s * 5 / 11, x + s * 8 / 11}, new int[] {y + s / 2, y + s * 7 / 10, y + s * 3 / 10}, 3);
     }
 
-    private void drawCard(Graphics2D g0, BoardLayout l, ApiModels.Tile t, double ease, float boardAlpha)
+    /** A small name plate above the hovered tile (below it on the top row), kept inside the board. */
+    private void drawHoverLabel(Graphics2D g0, BoardLayout l, Rectangle cell, ApiModels.Tile t, double in, float boardAlpha)
     {
-        Rectangle c = l.card();
+        if (in <= 0.02) return;
         Graphics2D g = (Graphics2D) g0.create();
         try
         {
-            // pop: scale 85% -> 100% about the card's centre while fading in
-            double scale = 0.85 + 0.15 * ease;
-            g.translate(c.getCenterX(), c.getCenterY());
-            g.scale(scale, scale);
-            g.translate(-c.getCenterX(), -c.getCenterY());
-            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) Math.max(0, Math.min(1, ease * boardAlpha))));
-
-            g.setColor(new Color(0, 0, 0, 140));
-            g.fillRoundRect(c.x + 5, c.y + 6, c.width, c.height, 18, 18);
-            g.setColor(CARD_BG);
-            g.fillRoundRect(c.x, c.y, c.width, c.height, 18, 18);
-            g.setStroke(new BasicStroke(2f));
-            g.setColor(GOLD);
-            g.drawRoundRect(c.x, c.y, c.width - 1, c.height - 1, 18, 18);
-            // a strip in the tile's state colour along the top
-            g.setColor(ForgeBingoPanel.stateColour(TileInfo.state(t)));
-            g.fillRoundRect(c.x + 8, c.y + 8, c.width - 16, 6, 6, 6);
-
-            int pad = 14;
-            int x = c.x + pad;
-            int maxW = c.width - 2 * pad;
-            int bottom = c.y + c.height - 22;
-            int y = c.y + 22;
-            boolean secret = TileInfo.isSecret(t);
-
-            Font titleFont = new Font("Serif", Font.BOLD, 18);
-            g.setFont(titleFont);
-            FontMetrics tm = g.getFontMetrics();
-            g.setColor(GOLD);
-            for (String line : wrap(tm, TileInfo.shownTitle(t), maxW, 2))
-            {
-                y += tm.getAscent();
-                g.drawString(line, x, y);
-                y += tm.getDescent();
-            }
-
-            Font body = new Font("SansSerif", Font.PLAIN, 12);
-            Font small = new Font("SansSerif", Font.PLAIN, 11);
-            g.setFont(body);
-            FontMetrics bm = g.getFontMetrics();
-            if (!secret)
-            {
-                y += 2 + bm.getAscent();
-                g.setColor(Color.WHITE);
-                g.drawString(TileInfo.worth(t) + " pts", x, y);
-                y += bm.getDescent();
-            }
-            String state = ForgeBingoPanel.stateText(t);
-            if (t.tasks != null && !t.completed && "any".equals(t.completionMode) && t.tasks.size() > 1) state += " (any one finishes it)";
-            g.setColor(ForgeBingoPanel.stateTextColour(t));
-            y = drawLines(g, wrap(bm, state, maxW, 3), x, y + 2);
-            if (t.description != null && !t.description.isEmpty())
-            {
-                g.setFont(small);
-                g.setColor(Color.GRAY);
-                y = drawLines(g, wrap(g.getFontMetrics(), t.description, maxW, 2), x, y + 2);
-            }
-            y += 6;
-
-            List<ApiModels.Task> tasks = t.tasks == null ? new ArrayList<>() : t.tasks;
-            int shown = 0;
-            for (ApiModels.Task k : tasks)
-            {
-                int need = bm.getHeight() * 2 + (k.requiredQty > 1 ? 14 : 0);
-                if (y + need > bottom) break;
-                g.setFont(body);
-                g.setColor(k.completed ? DONE_TICK : Color.WHITE);
-                y = drawLines(g, wrap(bm, (k.completed ? "[x] " : "[ ] ") + (k.description == null ? "" : k.description), maxW, 2), x, y);
-                if (k.requiredQty > 1)
-                {
-                    y += 2;
-                    int barH = 11;
-                    g.setColor(BAR_BG);
-                    g.fillRoundRect(x, y, maxW, barH, 4, 4);
-                    double p = Math.min(1, Math.max(0, k.approvedQty / (double) k.requiredQty));
-                    g.setColor(k.completed ? BAR_DONE : BAR_FILL);
-                    g.fillRoundRect(x, y, (int) Math.round(maxW * p), barH, 4, 4);
-                    g.setFont(new Font("SansSerif", Font.BOLD, 10));
-                    FontMetrics pm = g.getFontMetrics();
-                    String txt = k.approvedQty + " / " + k.requiredQty + (k.pendingQty > 0 ? "  (+" + k.pendingQty + " pending)" : "");
-                    g.setColor(Color.WHITE);
-                    g.drawString(txt, x + (maxW - pm.stringWidth(txt)) / 2, y + barH - 2);
-                    y += barH;
-                }
-                else if (k.pendingQty > 0 && !k.completed)
-                {
-                    g.setFont(small);
-                    g.setColor(new Color(0xffd83d));
-                    y = drawLines(g, java.util.Collections.singletonList("Sent, waiting for a reviewer"), x, y);
-                }
-                g.setFont(small);
-                g.setColor(Color.GRAY);
-                y = drawLines(g, wrap(g.getFontMetrics(), ForgeBingoPanel.trackingText(k), maxW, 1), x, y + 1);
-                y += 6;
-                shown++;
-            }
-            g.setFont(small);
-            FontMetrics sm = g.getFontMetrics();
-            if (shown < tasks.size())
-            {
-                g.setColor(Color.LIGHT_GRAY);
-                g.drawString(ellipsize(sm, "+" + (tasks.size() - shown) + " more: see the ForgeBingo panel", maxW), x, bottom + 2);
-            }
-            String hint = "Click to close";
-            g.setColor(new Color(150, 140, 120));
-            g.drawString(hint, c.x + c.width - pad - sm.stringWidth(hint), c.y + c.height - 8);
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) Math.min(1, in) * boardAlpha));
+            Font bold = FontManager.getRunescapeBoldFont();
+            Font small = FontManager.getRunescapeSmallFont();
+            FontMetrics bm = g.getFontMetrics(bold);
+            FontMetrics sm = g.getFontMetrics(small);
+            Rectangle b = l.board();
+            int maxW = Math.min(260, b.width - 16);
+            String title = ellipsize(bm, TileInfo.shownTitle(t), maxW - 16);
+            String sub = TileInfo.isSecret(t) ? "Secret tile" : ForgeBingoPanel.stateText(t) + "  -  " + points(TileInfo.worth(t));
+            sub = ellipsize(sm, sub, maxW - 16);
+            int w = Math.max(bm.stringWidth(title), sm.stringWidth(sub)) + 16;
+            int h = 36;
+            int x = Math.max(b.x + 6, Math.min(b.x + b.width - 6 - w, cell.x + cell.width / 2 - w / 2));
+            int lift = (int) Math.round((1 - in) * 4);
+            int y = cell.y - h - 6 + lift;
+            if (y < b.y + 4) y = cell.y + cell.height + 6 - lift;
+            g.setColor(new Color(0, 0, 0, 110));
+            g.fillRoundRect(x + 1, y + 2, w, h, 8, 8);
+            g.setPaint(new GradientPaint(x, y, CARD_TOP, x, y + h, CARD_BOTTOM));
+            g.fillRoundRect(x, y, w, h, 8, 8);
+            g.setStroke(new BasicStroke(1f));
+            g.setColor(GOLD_EDGE);
+            g.drawRoundRect(x, y, w - 1, h - 1, 8, 8);
+            text(g, bold, title, GOLD, x + 8, y + 15, false);
+            text(g, small, sub, ForgeBingoPanel.stateTextColour(t), x + 8, y + 29, false);
         }
         finally
         {
             g.dispose();
         }
+    }
+
+    /** The tile card: sized to what it shows, centred on the board, popping in with a slight overshoot. */
+    private void drawCard(Graphics2D g0, BoardLayout l, ApiModels.Tile t, double progress, float boardAlpha)
+    {
+        Rectangle area = l.card();
+        int w = Math.min(area.width, 300);
+        int contentH = cardContent(g0, t, 0, 0, w - 2 * CARD_PAD, area.height - 2 * CARD_PAD, true);
+        int h = Math.min(area.height, contentH + 2 * CARD_PAD);
+        Rectangle b = l.board();
+        int cx = b.x + b.width / 2;
+        int cy = b.y + b.height / 2;
+        Rectangle c = new Rectangle(cx - w / 2, cy - h / 2, w, h);
+        c.y = Math.max(area.y, Math.min(area.y + area.height - h, c.y));
+
+        double ease = easeOutBack(Math.max(0, Math.min(1, progress)));
+        double fade = BoardLayout.easeOut(progress);
+        Graphics2D g = (Graphics2D) g0.create();
+        try
+        {
+            // the board behind dims while a card is open
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (fade * boardAlpha)));
+            g.setColor(new Color(0, 0, 0, 120));
+            g.fillRoundRect(b.x, b.y, b.width, b.height, 12, 12);
+
+            double scale = 0.9 + 0.1 * ease;
+            g.translate(c.getCenterX(), c.getCenterY());
+            g.scale(scale, scale);
+            g.translate(-c.getCenterX(), -c.getCenterY());
+
+            for (int i = 4; i >= 1; i--)
+            {
+                g.setColor(new Color(0, 0, 0, 35));
+                g.fillRoundRect(c.x - i + 2, c.y - i + 5, c.width + 2 * i, c.height + 2 * i, 16 + 2 * i, 16 + 2 * i);
+            }
+            g.setPaint(new GradientPaint(c.x, c.y, CARD_TOP, c.x, c.y + c.height, CARD_BOTTOM));
+            g.fillRoundRect(c.x, c.y, c.width, c.height, 14, 14);
+            g.setStroke(new BasicStroke(1f));
+            g.setColor(Color.BLACK);
+            g.drawRoundRect(c.x, c.y, c.width - 1, c.height - 1, 14, 14);
+            g.setColor(GOLD_DIM);
+            g.drawRoundRect(c.x + 1, c.y + 1, c.width - 3, c.height - 3, 12, 12);
+            // the tile's state colour as a slim band across the top
+            Color band = ForgeBingoPanel.stateColour(TileInfo.state(t));
+            g.setColor(lighten(band, 30));
+            g.fillRoundRect(c.x + 10, c.y + 7, c.width - 20, 3, 3, 3);
+
+            cardContent(g, t, c.x + CARD_PAD, c.y + CARD_PAD, c.width - 2 * CARD_PAD, c.height - 2 * CARD_PAD, false);
+        }
+        finally
+        {
+            g.dispose();
+        }
+    }
+
+    private static final int CARD_PAD = 14;
+
+    /**
+     * Lays out (dry = true: only measures) the card's text: title, points + state, description, then each task with
+     * its checkbox, progress bar and how it's tracked. Returns the height used.
+     */
+    private int cardContent(Graphics2D g, ApiModels.Tile t, int x, int top, int maxW, int maxH, boolean dry)
+    {
+        Font bold = FontManager.getRunescapeBoldFont();
+        Font body = FontManager.getRunescapeFont();
+        Font small = FontManager.getRunescapeSmallFont();
+        FontMetrics bm = g.getFontMetrics(bold);
+        FontMetrics tm = g.getFontMetrics(body);
+        FontMetrics sm = g.getFontMetrics(small);
+        int bottom = top + maxH;
+        int y = top + 2;
+        boolean secret = TileInfo.isSecret(t);
+
+        for (String line : wrap(bm, TileInfo.shownTitle(t), maxW - (secret ? 0 : 50), 2))
+        {
+            y += bm.getAscent();
+            if (!dry) text(g, bold, line, GOLD, x, y, false);
+            y += bm.getDescent() + 1;
+        }
+        if (!secret && !dry)
+        {
+            // points as a small pill on the right of the first title line
+            String pts = points(TileInfo.worth(t));
+            int pw = sm.stringWidth(pts) + 10;
+            int px = x + maxW - pw;
+            int py = top + 2;
+            g.setColor(new Color(0, 0, 0, 120));
+            g.fillRoundRect(px, py, pw, 15, 8, 8);
+            g.setStroke(new BasicStroke(1f));
+            g.setColor(GOLD_EDGE);
+            g.drawRoundRect(px, py, pw - 1, 14, 8, 8);
+            text(g, small, pts, GOLD, px + 5, py + 11, false);
+        }
+
+        String state = ForgeBingoPanel.stateText(t);
+        if (t.tasks != null && !t.completed && "any".equals(t.completionMode) && t.tasks.size() > 1) state += " (any one finishes it)";
+        y = lines(g, small, wrap(sm, state, maxW, 2), ForgeBingoPanel.stateTextColour(t), x, y + 2, dry);
+        if (t.description != null && !t.description.isEmpty())
+        {
+            y = lines(g, small, wrap(sm, t.description, maxW, 3), MUTED, x, y + 3, dry);
+        }
+
+        List<ApiModels.Task> tasks = t.tasks == null ? new ArrayList<>() : t.tasks;
+        if (!tasks.isEmpty())
+        {
+            y += 7;
+            if (!dry)
+            {
+                g.setColor(new Color(255, 255, 255, 18));
+                g.drawLine(x, y, x + maxW, y);
+                g.setColor(new Color(0, 0, 0, 120));
+                g.drawLine(x, y + 1, x + maxW, y + 1);
+            }
+            y += 6;
+        }
+        int shown = 0;
+        int box = 10;
+        for (ApiModels.Task k : tasks)
+        {
+            boolean kDone = k.completed || t.completed;
+            List<String> desc = wrap(tm, k.description == null ? "" : k.description, maxW - box - 6, 2);
+            List<String> how = kDone ? new ArrayList<>() : wrap(sm, ForgeBingoPanel.trackingText(k), maxW - box - 6, 2);
+            int need = desc.size() * tm.getHeight() + how.size() * sm.getHeight() + (k.requiredQty > 1 ? 15 : 0) + 6;
+            if (y + need > bottom - 14 && shown > 0) break;
+            if (!dry) drawCheckbox(g, x, y + 2, box, kDone);
+            int tx = x + box + 6;
+            y = lines(g, body, desc, kDone ? DONE_TICK : TEXT, tx, y, dry);
+            if (k.requiredQty > 1)
+            {
+                y += 3;
+                if (!dry) drawBar(g, sm, tx, y, maxW - box - 6, k);
+                y += 12;
+            }
+            else if (k.pendingQty > 0 && !kDone)
+            {
+                y = lines(g, small, java.util.Collections.singletonList("Sent - waiting for a reviewer"), PENDING, tx, y, dry);
+            }
+            y = lines(g, small, how, MUTED, tx, y + 1, dry);
+            y += 6;
+            shown++;
+        }
+        if (shown < tasks.size())
+        {
+            y += 2;
+            if (!dry) text(g, small, ellipsize(sm, "+" + (tasks.size() - shown) + " more in the ForgeBingo side panel", maxW), TEXT, x, y + sm.getAscent(), false);
+            y += sm.getHeight();
+        }
+        y += 4;
+        String hint = "Click anywhere to close";
+        if (!dry) text(g, small, hint, new Color(0x6f675c), x + maxW - sm.stringWidth(hint), y + sm.getAscent(), false);
+        y += sm.getHeight();
+        return y - top;
+    }
+
+    private static void drawCheckbox(Graphics2D g, int x, int y, int s, boolean done)
+    {
+        g.setColor(done ? new Color(0x1d4a1d) : new Color(0, 0, 0, 140));
+        g.fillRoundRect(x, y, s, s, 3, 3);
+        g.setStroke(new BasicStroke(1f));
+        g.setColor(done ? DONE_TICK : GOLD_DIM);
+        g.drawRoundRect(x, y, s - 1, s - 1, 3, 3);
+        if (done)
+        {
+            g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g.drawPolyline(new int[] {x + 2, x + 4, x + s - 2}, new int[] {y + s / 2, y + s - 3, y + 2}, 3);
+        }
+    }
+
+    private static void drawBar(Graphics2D g, FontMetrics sm, int x, int y, int w, ApiModels.Task k)
+    {
+        int h = 11;
+        g.setColor(BAR_BG);
+        g.fillRoundRect(x, y, w, h, 6, 6);
+        double p = Math.min(1, Math.max(0, k.approvedQty / (double) Math.max(1, k.requiredQty)));
+        int fw = (int) Math.round(w * p);
+        if (fw > 0)
+        {
+            Color c = k.completed ? BAR_DONE : BAR_FILL;
+            g.setPaint(new GradientPaint(x, y, lighten(c, 30), x, y + h, c));
+            g.fillRoundRect(x, y, Math.max(6, fw), h, 6, 6);
+        }
+        String txt = k.approvedQty + " / " + k.requiredQty + (k.pendingQty > 0 ? "  (+" + k.pendingQty + " pending)" : "");
+        text(g, sm.getFont(), txt, Color.WHITE, x + w / 2, y + h - 1, true);
     }
 
     private BufferedImage icon(int itemId)
@@ -546,28 +746,43 @@ public class BoardOverlay extends Overlay
 
     // ---------- small helpers ----------
 
-    private static int drawLines(Graphics2D g, List<String> lines, int x, int y)
+    /** Game-style text: 1px black shadow under it. centred = x is the centre. */
+    private static void text(Graphics2D g, Font f, String s, Color c, int x, int y, boolean centred)
     {
-        FontMetrics fm = g.getFontMetrics();
+        if (s == null || s.isEmpty()) return;
+        g.setFont(f);
+        int tx = centred ? x - g.getFontMetrics().stringWidth(s) / 2 : x;
+        g.setColor(SHADOW);
+        g.drawString(s, tx + 1, y + 1);
+        g.setColor(c);
+        g.drawString(s, tx, y);
+    }
+
+    /** Draws (or, when dry, only measures) lines starting with their tops at y; returns the y under the last one. */
+    private static int lines(Graphics2D g, Font f, List<String> lines, Color c, int x, int y, boolean dry)
+    {
+        FontMetrics fm = g.getFontMetrics(f);
         for (String line : lines)
         {
             y += fm.getAscent();
-            g.drawString(line, x, y);
+            if (!dry) text(g, f, line, c, x, y, false);
             y += fm.getDescent();
         }
         return y;
     }
 
-    private static void centredText(Graphics2D g, Rectangle r, String s, Font f, Color c)
+    static String points(int n)
     {
-        g.setFont(f);
-        FontMetrics fm = g.getFontMetrics();
-        int tx = r.x + (r.width - fm.stringWidth(s)) / 2;
-        int ty = r.y + (r.height - fm.getHeight()) / 2 + fm.getAscent();
-        g.setColor(new Color(0, 0, 0, 180));
-        g.drawString(s, tx + 1, ty + 1);
-        g.setColor(c);
-        g.drawString(s, tx, ty);
+        return n + (n == 1 ? " pt" : " pts");
+    }
+
+    /** Slight overshoot then settle, for the card pop. */
+    static double easeOutBack(double t)
+    {
+        double c1 = 1.4;
+        double c3 = c1 + 1;
+        double u = t - 1;
+        return 1 + c3 * u * u * u + c1 * u * u;
     }
 
     /** "Dragon warhammer" -> "DW"; one word -> its first two letters. */
@@ -597,6 +812,19 @@ public class BoardOverlay extends Overlay
     private static Color lighten(Color c, int by)
     {
         return new Color(Math.min(255, c.getRed() + by), Math.min(255, c.getGreen() + by), Math.min(255, c.getBlue() + by), c.getAlpha());
+    }
+
+    private static Color darken(Color c, int by)
+    {
+        return new Color(Math.max(0, c.getRed() - by), Math.max(0, c.getGreen() - by), Math.max(0, c.getBlue() - by), c.getAlpha());
+    }
+
+    private static Color mix(Color a, Color b, double t)
+    {
+        double u = Math.max(0, Math.min(1, t));
+        return new Color((int) Math.round(a.getRed() + (b.getRed() - a.getRed()) * u),
+            (int) Math.round(a.getGreen() + (b.getGreen() - a.getGreen()) * u),
+            (int) Math.round(a.getBlue() + (b.getBlue() - a.getBlue()) * u), a.getAlpha());
     }
 
     private static String ellipsize(FontMetrics fm, String s, int maxW)

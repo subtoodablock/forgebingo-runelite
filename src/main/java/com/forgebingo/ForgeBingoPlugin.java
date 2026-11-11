@@ -344,7 +344,7 @@ public class ForgeBingoPlugin extends Plugin
             if (me.ok() && me.body != null)
             {
                 notifyPanel(p -> {
-                    p.setStatus(true, "Connected as " + (me.body.displayName == null ? "?" : me.body.displayName));
+                    p.setStatus(true, "Connected" + (me.body.displayName == null ? "" : " - website account " + me.body.displayName));
                     p.setScope(ConnectionStatus.keyScope(me.body));
                 });
                 helloPending = true;
@@ -357,7 +357,7 @@ public class ForgeBingoPlugin extends Plugin
             {
                 String msg = ConnectionStatus.authMessage(me.errorCode);
                 notifyPanel(p -> {
-                    p.setStatus(false, "api_key_revoked".equals(me.errorCode) ? "Key revoked" : "Key not recognised");
+                    p.setStatus(false, "api_key_revoked".equals(me.errorCode) ? "Not connected: key stopped working" : "Not connected: key not recognised");
                     p.setScope("");
                     p.setIdentity(java.util.Collections.singletonList(new ConnectionStatus.Line(ConnectionStatus.Level.ERROR, msg)));
                 });
@@ -1239,7 +1239,9 @@ public class ForgeBingoPlugin extends Plugin
         {
             clientThread.invoke(() -> chatMessageManager.queue(QueuedMessage.builder()
                 .type(ChatMessageType.CONSOLE)
-                .runeLiteFormattedMessage("[ForgeBingo] " + text.replace("<", "").replace(">", ""))
+                .runeLiteFormattedMessage(net.runelite.client.util.ColorUtil.wrapWithColorTag(
+                    "[ForgeBingo] " + text.replace("<", "").replace(">", ""),
+                    config.chatColor() == null ? ForgeBingoConfig.DEFAULT_CHAT_COLOR : config.chatColor()))
                 .build()));
         }
     }
