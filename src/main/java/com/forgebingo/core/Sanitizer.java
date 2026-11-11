@@ -139,6 +139,8 @@ public final class Sanitizer
             {
                 t.iconUrl = null;
             }
+            // only ever compared against TileIcons' table, never drawn as text or used in a URL
+            if (t.iconEmoji != null && (t.iconEmoji.isEmpty() || t.iconEmoji.length() > 16)) t.iconEmoji = null;
             t.tasks = cap(t.tasks, MAX_TASKS);
             t.tasks.removeIf(x -> x == null);
             for (ApiModels.Task k : t.tasks)

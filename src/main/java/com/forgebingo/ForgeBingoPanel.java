@@ -3,6 +3,7 @@ package com.forgebingo;
 import com.forgebingo.core.ApiClient;
 import com.forgebingo.core.ApiModels;
 import com.forgebingo.core.ConnectionStatus;
+import com.forgebingo.core.TileIcons;
 import com.forgebingo.core.TileInfo;
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -87,7 +88,12 @@ class ForgeBingoPanel extends PluginPanel
     private final JPanel nextUp = column();
     private String selectedTileId;
     private final Map<String, JLabel> tileLabels = new ConcurrentHashMap<>();
-    private final Map<String, ImageIcon> proxyIcons = new ConcurrentHashMap<>();
+    /** the last board shown, so icon arrivals and "working on" changes can redraw without a server round trip */
+    private ApiModels.BoardResponse lastBoard;
+    private ItemManager lastItemManager;
+    private javax.swing.Timer iconRedraw;
+    /** the fireworks playing on an open finished tile */
+    private Fireworks fireworks;
     private boolean updatingBox;
 
     ForgeBingoPanel(ForgeBingoPlugin plugin, ApiClient api)
@@ -258,8 +264,24 @@ class ForgeBingoPanel extends PluginPanel
     {
     }
 
+    /** Server icons arrived: redraw the grid once they settle (many arrive together on the first load). */
+    void iconsChanged()
+    {
+        if (lastBoard == null) return;
+        if (iconRedraw == null)
+        {
+            iconRedraw = new javax.swing.Timer(250, e -> {
+                if (lastBoard != null) setBoard(lastBoard, null, lastItemManager);
+            });
+            iconRedraw.setRepeats(false);
+        }
+        iconRedraw.restart();
+    }
+
     void setBoard(ApiModels.BoardResponse board, ApiModels.LeaderboardResponse leaderboard, ItemManager itemManager)
     {
+        lastBoard = board;
+        lastItemManager = itemManager;
         teamLabel.setText(wrapHtml(board.teamName == null ? "Your team" : board.teamName, CARD_TEXT));
         String ev = board.event != null && board.event.name != null ? board.event.name : "";
         if (board.event != null && !board.event.active) ev += (ev.isEmpty() ? "" : " ") + "(not running)";
@@ -297,7 +319,26 @@ class ForgeBingoPanel extends PluginPanel
         grid.repaint();
 
         nextUp.removeAll();
+        // "Working on": tiles this player pinned from a tile's card (finished ones drop off by themselves)
+        java.util.Set<String> pinned = plugin.workingOn();
+        List<ApiModels.Tile> working = new java.util.ArrayList<>();
+        for (ApiModels.Tile t : board.tiles)
+        {
+            if (t.id == null || !pinned.contains(t.id)) continue;
+            if (t.completed) plugin.setWorkingOn(t.id, false); else working.add(t);
+        }
+        if (!working.isEmpty())
+        {
+            nextUp.add(gap(6));
+            nextUp.add(left(section("Working on")));
+            for (int i = 0; i < working.size(); i++)
+            {
+                if (i > 0) nextUp.add(gap(4));
+                nextUp.add(nextUpRow(working.get(i), true));
+            }
+        }
         List<ApiModels.Tile> next = TileInfo.nextUp(board.tiles, 3);
+        next.removeIf(working::contains);
         if (!next.isEmpty())
         {
             nextUp.add(gap(6));
@@ -307,7 +348,7 @@ class ForgeBingoPanel extends PluginPanel
         for (ApiModels.Tile t : next)
         {
             if (!firstNext) nextUp.add(gap(4));
-            nextUp.add(nextUpRow(t));
+            nextUp.add(nextUpRow(t, false));
             firstNext = false;
         }
         nextUp.revalidate();
@@ -317,32 +358,56 @@ class ForgeBingoPanel extends PluginPanel
         {
             ApiModels.Tile still = null;
             for (ApiModels.Tile t : board.tiles) if (selectedTileId.equals(t.id)) still = t;
-            if (still != null) showTile(still); else closeTile();
+            if (still != null) showTile(still, false); else closeTile();
         }
     }
 
     /** Opens one tile under the grid: what it is, where it stands, each task with its progress and how it is tracked. */
     void showTile(ApiModels.Tile t)
     {
+        showTile(t, true);
+    }
+
+    /** @param opened true when the player just opened it (plays the fireworks on a finished tile), false on a refresh */
+    void showTile(ApiModels.Tile t, boolean opened)
+    {
         String previous = selectedTileId;
         selectedTileId = t.id;
         if (previous != null && tileLabels.get(previous) != null) tileLabels.get(previous).setBorder(BorderFactory.createLineBorder(CLEAR, 2));
         if (t.id != null && tileLabels.get(t.id) != null) tileLabels.get(t.id).setBorder(BorderFactory.createLineBorder(ColorScheme.BRAND_ORANGE, 2));
+        if (fireworks != null && (opened || !t.completed))
+        {
+            fireworks.stop();
+            fireworks = null;
+        }
+        Fireworks keep = t.completed && !opened ? fireworks : null;
         detail.removeAll();
+        if (t.completed)
+        {
+            Fireworks fw = keep != null ? keep : new Fireworks();
+            detail.add(fullWidth(fw, Fireworks.HEIGHT));
+            detail.add(gap(4));
+            if (keep == null)
+            {
+                fireworks = fw;
+                fw.start();
+            }
+        }
         JLabel title = new JLabel(wrapHtml(TileInfo.shownTitle(t), CARD_TEXT));
         title.setFont(FontManager.getRunescapeBoldFont());
         title.setForeground(ColorScheme.BRAND_ORANGE);
         detail.add(left(title));
         boolean secret = TileInfo.isSecret(t);
         String state = stateText(t);
-        if (!secret) state += "  -  " + TileInfo.worth(t) + " pts";
+        if (!secret) state += "  -  " + BoardOverlay.points(TileInfo.worth(t));
         if (!t.completed && "any".equals(t.completionMode) && t.tasks.size() > 1) state += " (any one finishes it)";
         detail.add(left(cardText(state, stateTextColour(t))));
         if (t.description != null && !t.description.isEmpty()) detail.add(left(cardText(t.description, MUTED)));
         detail.add(gap(6));
         for (ApiModels.Task k : t.tasks)
         {
-            detail.add(left(cardText((k.completed ? "[x] " : "[ ] ") + k.description, k.completed ? ColorScheme.PROGRESS_COMPLETE_COLOR : Color.WHITE)));
+            boolean kDone = k.completed || t.completed;
+            detail.add(left(cardText((kDone ? "[x] " : "[ ] ") + k.description, kDone ? ColorScheme.PROGRESS_COMPLETE_COLOR : Color.WHITE)));
             if (k.requiredQty > 1)
             {
                 JProgressBar bar = new JProgressBar(0, k.requiredQty);
@@ -360,12 +425,26 @@ class ForgeBingoPanel extends PluginPanel
             {
                 detail.add(left(cardText("Sent, waiting for a reviewer", ColorScheme.PROGRESS_INPROGRESS_COLOR)));
             }
-            detail.add(left(cardText(trackingText(k), MUTED)));
+            if (!kDone) detail.add(left(cardText(trackingText(k), MUTED)));
             detail.add(gap(6));
+        }
+        JPanel buttons = new JPanel(new GridLayout(1, t.completed || t.id == null ? 1 : 2, 6, 0));
+        buttons.setOpaque(false);
+        if (!t.completed && t.id != null)
+        {
+            boolean on = plugin.workingOn().contains(t.id);
+            JButton pin = button(on ? "Stop working on" : "Working on it",
+                on ? "Take this tile off your Working on list" : "Pin this tile to the top of the panel while you go for it");
+            pin.addActionListener(e -> {
+                plugin.setWorkingOn(t.id, !on);
+                if (lastBoard != null) setBoard(lastBoard, null, lastItemManager);
+            });
+            buttons.add(pin);
         }
         JButton back = button("Close", "Close this tile");
         back.addActionListener(e -> closeTile());
-        detail.add(fullWidth(back, 24));
+        buttons.add(back);
+        detail.add(fullWidth(buttons, 24));
         detail.setVisible(true);
         detail.revalidate();
         detail.repaint();
@@ -375,6 +454,11 @@ class ForgeBingoPanel extends PluginPanel
     {
         if (selectedTileId != null && tileLabels.get(selectedTileId) != null) tileLabels.get(selectedTileId).setBorder(BorderFactory.createLineBorder(CLEAR, 2));
         selectedTileId = null;
+        if (fireworks != null)
+        {
+            fireworks.stop();
+            fireworks = null;
+        }
         detail.setVisible(false);
         detail.removeAll();
         detail.revalidate();
@@ -456,7 +540,7 @@ class ForgeBingoPanel extends PluginPanel
         }
         StringBuilder tip = new StringBuilder("<html><b>").append(esc(st == TileInfo.State.SECRET ? "Secret tile" : t.title)).append("</b>");
         if (st == TileInfo.State.SECRET) tip.append("<br>").append(esc(t.description == null || t.description.isEmpty() ? "Revealed later" : t.description));
-        else tip.append(" (").append(TileInfo.worth(t)).append(" pts)");
+        else tip.append(" (").append(BoardOverlay.points(TileInfo.worth(t))).append(")");
         String reason = TileInfo.needsChangesReason(t);
         if (reason != null) tip.append("<br><font color='#ff7070'>Needs changes: ").append(esc(reason)).append("</font>");
         for (ApiModels.Task k : t.tasks)
@@ -481,12 +565,14 @@ class ForgeBingoPanel extends PluginPanel
         return l;
     }
 
-    /** One "closest to done" tile: a clickable card with the count on the right. */
-    private JPanel nextUpRow(ApiModels.Tile t)
+    /** One "working on" / "closest to done" tile: a clickable card with the count on the right. */
+    private JPanel nextUpRow(ApiModels.Tile t, boolean pinned)
     {
         JPanel row = new JPanel(new BorderLayout(6, 0));
         row.setBackground(CARD);
-        row.setBorder(BorderFactory.createEmptyBorder(5, 8, 5, 8));
+        row.setBorder(pinned
+            ? BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 3, 0, 0, ColorScheme.BRAND_ORANGE), BorderFactory.createEmptyBorder(5, 5, 5, 8))
+            : BorderFactory.createEmptyBorder(5, 8, 5, 8));
         String count = TileInfo.countText(t);
         JLabel countLabel = new JLabel(count);
         countLabel.setFont(FontManager.getRunescapeSmallFont());
@@ -655,41 +741,144 @@ class ForgeBingoPanel extends PluginPanel
         return s == null ? "" : s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
+    /**
+     * The tile's picture: its item, else its uploaded icon (fetched once, shared with the overlay), else an item
+     * picked from its emoji / title / tasks (TileIcons), else its initials. Secret tiles keep their "?".
+     */
     private void loadIcon(JLabel label, ApiModels.Tile tile, ItemManager itemManager)
     {
-        if (!tile.hasIcon) return;
-        if (tile.iconItemId != null)
+        if (TileInfo.isSecret(tile)) return;
+        Integer item = tile.iconItemId;
+        if (item == null && tile.hasIcon && tile.iconUrl != null && tile.iconEmoji == null)
         {
-            AsyncBufferedImage img = itemManager.getImage(tile.iconItemId);
-            final int px = Math.max(10, cell - 6);
-            Runnable set = () -> label.setIcon(new ImageIcon(img.getScaledInstance(px, px, java.awt.Image.SCALE_SMOOTH)));
-            set.run();
-            img.onLoaded(() -> javax.swing.SwingUtilities.invokeLater(set));
-        }
-        else if (tile.iconUrl != null) // already validated as /v1/icons/... by Sanitizer; fetched from the API host only
-        {
-            String path = tile.iconUrl;
-            ImageIcon cached = proxyIcons.get(path);
-            if (cached != null)
+            BufferedImage up = plugin.tileImage(tile.iconUrl);
+            if (up != null)
             {
-                label.setIcon(cached);
+                label.setIcon(new ImageIcon(fit(up, Math.max(10, cell - 6))));
                 return;
             }
-            plugin.fetchIcon(path, bytes -> {
-                try
+            if (!plugin.tileImageMissing(tile.iconUrl)) return; // still loading: iconsChanged() redraws
+        }
+        if (item == null) item = TileIcons.fallbackItem(tile);
+        if (item == null || itemManager == null)
+        {
+            label.setText(BoardOverlay.initials(tile.title));
+            label.setForeground(new Color(235, 225, 205));
+            label.setFont(cell >= 26 ? FontManager.getRunescapeBoldFont() : FontManager.getRunescapeSmallFont());
+            return;
+        }
+        AsyncBufferedImage img = itemManager.getImage(item);
+        final int px = Math.max(10, cell - 6);
+        Runnable set = () -> label.setIcon(new ImageIcon(fit(img, px)));
+        set.run();
+        img.onLoaded(() -> javax.swing.SwingUtilities.invokeLater(set));
+    }
+
+    /** Scales a picture to fit a px square, keeping its shape. */
+    private static java.awt.Image fit(BufferedImage img, int px)
+    {
+        int w = Math.max(1, img.getWidth());
+        int h = Math.max(1, img.getHeight());
+        double s = px / (double) Math.max(w, h);
+        return img.getScaledInstance(Math.max(1, (int) Math.round(w * s)), Math.max(1, (int) Math.round(h * s)), java.awt.Image.SCALE_SMOOTH);
+    }
+
+    /** A short burst of fireworks across the top of a finished tile's card (about 1.8 s, then it rests). */
+    static final class Fireworks extends JComponent
+    {
+        static final int HEIGHT = 58;
+        private static final Color[] COLOURS = {
+            new Color(0xffb83f), new Color(0x6ee06e), new Color(0x5ec8ff), new Color(0xff6f91), new Color(0xfff27a)};
+        private static final long RUN_MS = 1800;
+        private final java.util.List<float[]> sparks = new java.util.ArrayList<>(); // x, y, vx, vy, life, colour
+        private final java.util.Random rnd = new java.util.Random();
+        private final javax.swing.Timer timer = new javax.swing.Timer(16, e -> step());
+        private long started;
+        private int bursts;
+
+        Fireworks()
+        {
+            setOpaque(false);
+            setToolTipText("Tile complete!");
+        }
+
+        void start()
+        {
+            started = System.currentTimeMillis();
+            bursts = 0;
+            sparks.clear();
+            timer.start();
+        }
+
+        void stop()
+        {
+            timer.stop();
+        }
+
+        private void step()
+        {
+            long t = System.currentTimeMillis() - started;
+            int w = Math.max(40, getWidth());
+            // a new burst every ~280 ms for the first second
+            if (t < 1100 && t / 280 >= bursts)
+            {
+                bursts++;
+                float cx = 20 + rnd.nextFloat() * (w - 40);
+                float cy = 14 + rnd.nextFloat() * 18;
+                int colour = rnd.nextInt(COLOURS.length);
+                for (int i = 0; i < 26; i++)
                 {
-                    BufferedImage img = ImageIO.read(new ByteArrayInputStream(bytes));
-                    if (img == null || img.getWidth() > 256 || img.getHeight() > 256) return;
-                    int px = Math.max(10, cell - 6);
-                    ImageIcon ic = new ImageIcon(img.getScaledInstance(px, px, java.awt.Image.SCALE_SMOOTH));
-                    proxyIcons.put(path, ic);
-                    label.setIcon(ic);
+                    double a = Math.PI * 2 * i / 26 + rnd.nextDouble() * 0.2;
+                    float sp = 0.9f + rnd.nextFloat() * 1.3f;
+                    sparks.add(new float[] {cx, cy, (float) Math.cos(a) * sp, (float) Math.sin(a) * sp, 1f, colour});
                 }
-                catch (java.io.IOException ignored)
+            }
+            for (java.util.Iterator<float[]> it = sparks.iterator(); it.hasNext(); )
+            {
+                float[] s = it.next();
+                s[0] += s[2];
+                s[1] += s[3];
+                s[2] *= 0.96f;
+                s[3] = s[3] * 0.96f + 0.035f; // a little gravity
+                s[4] -= 0.018f;
+                if (s[4] <= 0) it.remove();
+            }
+            if (t > RUN_MS && sparks.isEmpty()) timer.stop();
+            repaint();
+        }
+
+        @Override
+        protected void paintComponent(java.awt.Graphics g0)
+        {
+            java.awt.Graphics2D g = (java.awt.Graphics2D) g0.create();
+            try
+            {
+                g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                for (float[] s : sparks)
                 {
-                    // leave blank
+                    Color c = COLOURS[(int) s[5]];
+                    int a = Math.max(0, Math.min(255, Math.round(255 * s[4])));
+                    g.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), a));
+                    float r = 1.2f + 1.3f * s[4];
+                    g.fill(new java.awt.geom.Ellipse2D.Float(s[0] - r, s[1] - r, r * 2, r * 2));
                 }
-            });
+                // the banner settles in as the sparks fade
+                long t = System.currentTimeMillis() - started;
+                float k = Math.min(1f, Math.max(0f, (t - 250) / 500f));
+                String msg = "TILE COMPLETE!";
+                g.setFont(FontManager.getRunescapeBoldFont());
+                java.awt.FontMetrics fm = g.getFontMetrics();
+                int x = (getWidth() - fm.stringWidth(msg)) / 2;
+                int y = getHeight() - 8 + Math.round((1 - k) * 6);
+                g.setColor(new Color(0, 0, 0, Math.round(200 * k)));
+                g.drawString(msg, x + 1, y + 1);
+                g.setColor(new Color(110, 224, 110, Math.round(255 * k)));
+                g.drawString(msg, x, y);
+            }
+            finally
+            {
+                g.dispose();
+            }
         }
     }
 

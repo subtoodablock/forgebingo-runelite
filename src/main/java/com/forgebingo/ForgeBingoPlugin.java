@@ -99,8 +99,9 @@ public class ForgeBingoPlugin extends Plugin
     private static final long BOARD_POLL_SECONDS = 8;
     /** spot animation id of the level-up fireworks (the one the game plays at 99) */
     private static final int LEVEL_UP_FIREWORKS = 199;
-    private static final long SCREENSHOT_TTL_MILLIS = 2 * 60_000L;
-    private static final int MAX_SCREENSHOTS = 3;
+    /** long enough to outlast a rate-limit pause (the server answers 429 with a 60 s wait) */
+    private static final long SCREENSHOT_TTL_MILLIS = 10 * 60_000L;
+    private static final int MAX_SCREENSHOTS = 8;
     /** gameval InventoryID.INV (the backpack). */
     private static final int INVENTORY_CONTAINER_ID = 93;
     private static final long CATALOGUE_REFRESH_MILLIS = 6 * 60 * 60_000L;
@@ -426,13 +427,73 @@ public class ForgeBingoPlugin extends Plugin
     }
 
     /** Fetches a proxied icon off the EDT and hands the bytes to the EDT. */
-    void fetchIcon(String proxyPath, java.util.function.Consumer<byte[]> onBytes)
+    /** Uploaded tile icons from the server, shared by the side panel and the board overlay. */
+    private final Map<String, BufferedImage> tileImages = new ConcurrentHashMap<>();
+    /** Paths that came back empty: never asked again this session (they used to be re-asked on every refresh). */
+    private final java.util.Set<String> tileImageMisses = ConcurrentHashMap.newKeySet();
+    private final java.util.Set<String> tileImageLoading = ConcurrentHashMap.newKeySet();
+
+    /**
+     * A tile's uploaded icon (/v1/icons/tiles/...), fetched once and cached. Returns null while it loads (the panel
+     * is told to redraw when it arrives) or when there is none (see {@link #tileImageMissing}). Any thread.
+     */
+    BufferedImage tileImage(String proxyPath)
     {
+        if (proxyPath == null || !com.forgebingo.core.IconRef.isProxyPath(proxyPath)) return null;
+        BufferedImage img = tileImages.get(proxyPath);
+        if (img != null || tileImageMisses.contains(proxyPath) || tileImages.size() > 300 || !tileImageLoading.add(proxyPath)) return img;
         executor.execute(() -> {
-            ApiClient a = api;
-            byte[] bytes = a == null ? null : a.icon(proxyPath);
-            if (bytes != null) SwingUtilities.invokeLater(() -> onBytes.accept(bytes));
+            BufferedImage got = null;
+            try
+            {
+                ApiClient a = api;
+                byte[] bytes = a == null ? null : a.icon(proxyPath);
+                if (bytes != null)
+                {
+                    BufferedImage read = ImageIO.read(new java.io.ByteArrayInputStream(bytes));
+                    if (read != null && read.getWidth() <= 256 && read.getHeight() <= 256) got = read;
+                }
+            }
+            catch (java.io.IOException | RuntimeException ex)
+            {
+                log.debug("tile icon failed", ex);
+            }
+            finally
+            {
+                if (got != null) tileImages.put(proxyPath, got); else tileImageMisses.add(proxyPath);
+                tileImageLoading.remove(proxyPath);
+            }
+            notifyPanel(ForgeBingoPanel::iconsChanged);
         });
+        return null;
+    }
+
+    boolean tileImageMissing(String proxyPath)
+    {
+        return proxyPath == null || tileImageMisses.contains(proxyPath);
+    }
+
+    // ---------- "working on" tiles (this player's own list, kept in their RuneLite settings) ----------
+
+    java.util.Set<String> workingOn()
+    {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        String raw = config.workingOn();
+        if (raw == null) return out;
+        for (String s : raw.split(","))
+        {
+            String id = s.trim();
+            if (!id.isEmpty() && id.length() <= 40 && out.size() < 10) out.add(id);
+        }
+        return out;
+    }
+
+    void setWorkingOn(String tileId, boolean on)
+    {
+        if (tileId == null) return;
+        java.util.Set<String> ids = workingOn();
+        if (on) ids.add(tileId); else ids.remove(tileId);
+        configManager.setConfiguration(ForgeBingoConfig.GROUP, "workingOn", String.join(",", ids));
     }
 
     void selectBoard(String teamBoardId)
@@ -445,6 +506,7 @@ public class ForgeBingoPlugin extends Plugin
     void refreshNow()
     {
         boardVersions.clear();
+        tileImageMisses.clear(); // Refresh retries icons that failed (e.g. while rate limited)
         connect();
         if (processor != null)
         {
@@ -1084,7 +1146,7 @@ public class ForgeBingoPlugin extends Plugin
             return;
         }
         log.debug("queue event {} {}", ev.sourceType, ev.label());
-        if (maybeScreenshot && config.screenshotOnMatch())
+        if (maybeScreenshot && config.screenshotOnMatch() && couldCount(ev))
         {
             captureScreenshot(ev.id);
         }
@@ -1117,6 +1179,39 @@ public class ForgeBingoPlugin extends Plugin
 
     // ---------- screenshots (kept in memory; uploaded only after server confirms a match) ----------
 
+    /**
+     * Could this event count for an open task on the current board? Only those get a screenshot, so ordinary
+     * drops no longer fill the few screenshot slots before the drop that matters (the server still decides).
+     */
+    private boolean couldCount(GameEvent ev)
+    {
+        ApiModels.BoardResponse b = currentBoard();
+        if (b == null || b.tiles == null) return true;
+        for (ApiModels.Tile t : b.tiles)
+        {
+            if (t == null || t.completed || t.tasks == null) continue;
+            for (ApiModels.Task k : t.tasks)
+            {
+                if (k == null || k.completed) continue;
+                if (k.itemIds != null && !k.itemIds.isEmpty())
+                {
+                    if (ev.items == null) continue;
+                    for (GameEvent.Item it : ev.items) if (k.itemIds.contains(it.itemId)) return true;
+                }
+                else if (k.sourceType != null && k.sourceType.equals(ev.sourceType))
+                {
+                    return true;
+                }
+            }
+        }
+        // secret tiles hide their tasks: their items come as hiddenItemIds
+        if (b.hiddenItemIds != null && ev.items != null)
+        {
+            for (GameEvent.Item it : ev.items) if (b.hiddenItemIds.contains(it.itemId)) return true;
+        }
+        return false;
+    }
+
     private void captureScreenshot(String eventId)
     {
         // only in game, and never with the bank PIN keypad on screen (its layout would be in the proof)
@@ -1139,7 +1234,15 @@ public class ForgeBingoPlugin extends Plugin
                 if (!ImageIO.write(img, "png", out)) return;
                 long now = System.currentTimeMillis();
                 screenshots.values().removeIf(s -> now - s.at > SCREENSHOT_TTL_MILLIS);
-                if (screenshots.size() >= MAX_SCREENSHOTS) return;
+                // full: drop the oldest instead of skipping this one (the newest drop is the likeliest to count)
+                while (screenshots.size() >= MAX_SCREENSHOTS)
+                {
+                    String oldest = null;
+                    long at = Long.MAX_VALUE;
+                    for (Map.Entry<String, Screenshot> s : screenshots.entrySet()) if (s.getValue().at < at) { at = s.getValue().at; oldest = s.getKey(); }
+                    if (oldest == null) break;
+                    screenshots.remove(oldest);
+                }
                 screenshots.put(eventId, new Screenshot(out.toByteArray(), now, kw, taken.withZoneSameInstant(java.time.ZoneOffset.UTC).toInstant().toString()));
             }
             catch (Exception ex)

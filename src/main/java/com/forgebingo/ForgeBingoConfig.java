@@ -179,6 +179,13 @@ public interface ForgeBingoConfig extends Config
         return true;
     }
 
+    /** Tile ids this player marked "I'm working on this" in the side panel (comma separated, at most 10). */
+    @ConfigItem(keyName = "workingOn", name = "", description = "", hidden = true)
+    default String workingOn()
+    {
+        return "";
+    }
+
     @ConfigItem(keyName = "activeBoardId", name = "", description = "", hidden = true)
     default String activeBoardId()
     {

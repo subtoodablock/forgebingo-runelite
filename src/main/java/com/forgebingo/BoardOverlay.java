@@ -92,8 +92,9 @@ public class BoardOverlay extends Overlay
         this.config = config;
         this.plugin = plugin;
         setPosition(OverlayPosition.DYNAMIC);
-        setLayer(OverlayLayer.ABOVE_WIDGETS);
-        setPriority(Overlay.PRIORITY_HIGH);
+        // above every other plugin's overlays and info boxes (owner, 2026-11-10)
+        setLayer(OverlayLayer.ALWAYS_ON_TOP);
+        setPriority(Overlay.PRIORITY_HIGHEST);
     }
 
     // ---------- state (any thread) ----------
@@ -449,7 +450,7 @@ public class BoardOverlay extends Overlay
         }
         else
         {
-            BufferedImage img = t.iconItemId != null ? icon(t.iconItemId) : null;
+            BufferedImage img = tilePicture(t);
             if (img != null && img.getWidth() > 1)
             {
                 // keep the item sprite's shape; draw at whole-pixel steps when it fits, so it stays sharp
@@ -553,11 +554,14 @@ public class BoardOverlay extends Overlay
     /** The tile card: sized to what it shows, centred on the board, popping in with a slight overshoot. */
     private void drawCard(Graphics2D g0, BoardLayout l, ApiModels.Tile t, double progress, float boardAlpha)
     {
-        Rectangle area = l.card();
-        int w = Math.min(area.width, 300);
-        int contentH = cardContent(g0, t, 0, 0, w - 2 * CARD_PAD, area.height - 2 * CARD_PAD, true);
-        int h = Math.min(area.height, contentH + 2 * CARD_PAD);
+        // the card may use the whole board (less a margin) so every task fits; it is only as tall as its content
         Rectangle b = l.board();
+        Rectangle area = new Rectangle(b.x + 10, b.y + 10, b.width - 20, b.height - 20);
+        int w = Math.min(area.width, 320);
+        int room = area.height - 2 * CARD_PAD;
+        boolean compact = cardContent(g0, t, 0, 0, w - 2 * CARD_PAD, Integer.MAX_VALUE / 4, true, false) > room;
+        int contentH = cardContent(g0, t, 0, 0, w - 2 * CARD_PAD, room, true, compact);
+        int h = Math.min(area.height, contentH + 2 * CARD_PAD);
         int cx = b.x + b.width / 2;
         int cy = b.y + b.height / 2;
         Rectangle c = new Rectangle(cx - w / 2, cy - h / 2, w, h);
@@ -595,7 +599,7 @@ public class BoardOverlay extends Overlay
             g.setColor(lighten(band, 30));
             g.fillRoundRect(c.x + 10, c.y + 7, c.width - 20, 3, 3, 3);
 
-            cardContent(g, t, c.x + CARD_PAD, c.y + CARD_PAD, c.width - 2 * CARD_PAD, c.height - 2 * CARD_PAD, false);
+            cardContent(g, t, c.x + CARD_PAD, c.y + CARD_PAD, c.width - 2 * CARD_PAD, c.height - 2 * CARD_PAD, false, compact);
         }
         finally
         {
@@ -607,9 +611,10 @@ public class BoardOverlay extends Overlay
 
     /**
      * Lays out (dry = true: only measures) the card's text: title, points + state, description, then each task with
-     * its checkbox, progress bar and how it's tracked. Returns the height used.
+     * its checkbox, progress bar and how it's tracked. compact = leave out the "how it's tracked" lines and keep each
+     * task to one line, so a tile with many tasks still shows all of them. Returns the height used.
      */
-    private int cardContent(Graphics2D g, ApiModels.Tile t, int x, int top, int maxW, int maxH, boolean dry)
+    private int cardContent(Graphics2D g, ApiModels.Tile t, int x, int top, int maxW, int maxH, boolean dry, boolean compact)
     {
         Font bold = FontManager.getRunescapeBoldFont();
         Font body = FontManager.getRunescapeFont();
@@ -668,10 +673,10 @@ public class BoardOverlay extends Overlay
         for (ApiModels.Task k : tasks)
         {
             boolean kDone = k.completed || t.completed;
-            List<String> desc = wrap(tm, k.description == null ? "" : k.description, maxW - box - 6, 2);
-            List<String> how = kDone ? new ArrayList<>() : wrap(sm, ForgeBingoPanel.trackingText(k), maxW - box - 6, 2);
-            int need = desc.size() * tm.getHeight() + how.size() * sm.getHeight() + (k.requiredQty > 1 ? 15 : 0) + 6;
-            if (y + need > bottom - 14 && shown > 0) break;
+            List<String> desc = wrap(tm, k.description == null ? "" : k.description, maxW - box - 6, compact ? 1 : 2);
+            List<String> how = kDone || compact ? new ArrayList<>() : wrap(sm, ForgeBingoPanel.trackingText(k), maxW - box - 6, 2);
+            int need = desc.size() * tm.getHeight() + how.size() * sm.getHeight() + (k.requiredQty > 1 ? 15 : 0) + (compact ? 3 : 6);
+            if (y + need > bottom - 2 * sm.getHeight() - 6 && shown > 0) break;
             if (!dry) drawCheckbox(g, x, y + 2, box, kDone);
             int tx = x + box + 6;
             y = lines(g, body, desc, kDone ? DONE_TICK : TEXT, tx, y, dry);
@@ -686,7 +691,7 @@ public class BoardOverlay extends Overlay
                 y = lines(g, small, java.util.Collections.singletonList("Sent - waiting for a reviewer"), PENDING, tx, y, dry);
             }
             y = lines(g, small, how, MUTED, tx, y + 1, dry);
-            y += 6;
+            y += compact ? 3 : 6;
             shown++;
         }
         if (shown < tasks.size())
@@ -731,6 +736,19 @@ public class BoardOverlay extends Overlay
         }
         String txt = k.approvedQty + " / " + k.requiredQty + (k.pendingQty > 0 ? "  (+" + k.pendingQty + " pending)" : "");
         text(g, sm.getFont(), txt, Color.WHITE, x + w / 2, y + h - 1, true);
+    }
+
+    /** Same order as the side panel: item icon, uploaded icon, an item picked by TileIcons; null = initials. */
+    private BufferedImage tilePicture(ApiModels.Tile t)
+    {
+        if (t.iconItemId != null) return icon(t.iconItemId);
+        if (t.hasIcon && t.iconUrl != null && t.iconEmoji == null)
+        {
+            BufferedImage up = plugin.tileImage(t.iconUrl);
+            if (up != null || !plugin.tileImageMissing(t.iconUrl)) return up;
+        }
+        Integer item = com.forgebingo.core.TileIcons.fallbackItem(t);
+        return item == null ? null : icon(item);
     }
 
     private BufferedImage icon(int itemId)

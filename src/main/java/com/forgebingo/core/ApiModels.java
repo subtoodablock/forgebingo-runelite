@@ -122,6 +122,8 @@ public final class ApiModels
         public boolean hasIcon;
         /** Relative to the API base URL: /v1/icons/tiles/&lt;id&gt;, or null. */
         public String iconUrl;
+        /** The website's emoji icon (servers from 2026-11-11), else null; mapped to an item by TileIcons. */
+        public String iconEmoji;
         public String completionMode;
         /** a hidden secret tile (null from older servers: see TileInfo.isSecret) */
         public Boolean secret;
