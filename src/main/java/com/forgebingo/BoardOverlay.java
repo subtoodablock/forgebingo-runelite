@@ -14,6 +14,7 @@ import java.awt.GradientPaint;
 import java.awt.Graphics2D;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
+import java.awt.geom.Point2D;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.List;
@@ -42,8 +43,10 @@ public class BoardOverlay extends Overlay
     /** hover highlight fade */
     static final long HOVER_MS = 110;
     /** opening cascade: each diagonal of cells starts this much after the previous one */
-    static final long CASCADE_STEP_MS = 9;
-    static final long CASCADE_CELL_MS = 170;
+    /** the whole opening deal, first tile leaving the deck to the last one landing */
+    static final long DEAL_MS = 3000;
+    /** one tile's flight from the deck to its slot */
+    static final long FLIGHT_MS = 420;
 
     private static final Color GOLD = new Color(0xffb83f);
     private static final Color GOLD_DIM = new Color(0x7a5c22);
@@ -378,6 +381,14 @@ public class BoardOverlay extends Overlay
         int prev = hoverable ? hoverPrev : -1;
         double hoverIn = anim ? BoardLayout.easeOut((now - hoverAt) / (double) HOVER_MS) : 1;
         Composite base = g.getComposite();
+        // Opening deal (owner, 2026-11-11): the tiles are dealt one by one from a deck at the bottom of the board,
+        // flying to their slots with a spin and a little overshoot; the whole deal takes DEAL_MS (3 s).
+        int n = l.size * l.size;
+        boolean dealing = sinceOpen != Long.MAX_VALUE;
+        double step = n > 1 ? (DEAL_MS - FLIGHT_MS) / (double) (n - 1) : 0;
+        Point2D deck = new Point2D.Double(b.getCenterX(), b.y + b.height - BoardLayout.PAD - l.cell / 2.0);
+        java.util.List<int[]> flying = new java.util.ArrayList<>();
+        int undealt = 0;
         for (int r = 0; r < l.size; r++)
         {
             for (int col = 0; col < l.size; col++)
@@ -385,25 +396,49 @@ public class BoardOverlay extends Overlay
                 ApiModels.Tile t = cells[r][col];
                 int idx = r * l.size + col;
                 double glow = t == null ? 0 : idx == hov ? hoverIn : idx == prev ? 1 - hoverIn : 0;
-                double appear = 1;
-                if (sinceOpen != Long.MAX_VALUE)
+                if (dealing)
                 {
-                    long local = sinceOpen - (r + col) * CASCADE_STEP_MS;
-                    appear = BoardLayout.easeOut(local / (double) CASCADE_CELL_MS);
-                    if (appear <= 0) continue;
+                    double dealt = (sinceOpen - idx * step) / FLIGHT_MS;
+                    if (dealt <= 0) { undealt++; continue; }
+                    if (dealt < 1) { flying.add(new int[] {r, col}); continue; }
                 }
-                Rectangle cell = l.cell(r, col);
-                if (appear < 1)
-                {
-                    g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (boardAlpha * appear)));
-                    int shrink = (int) Math.round((1 - appear) * cell.width * 0.18);
-                    cell = new Rectangle(cell.x + shrink, cell.y + shrink, cell.width - 2 * shrink, cell.height - 2 * shrink);
-                }
-                drawCell(g, cell, t, glow, t != null && selected != null && t == selected);
-                if (appear < 1) g.setComposite(base);
+                drawCell(g, l.cell(r, col), t, glow, t != null && selected != null && t == selected);
             }
         }
-        if (sinceOpen != Long.MAX_VALUE && sinceOpen > (2L * l.size) * CASCADE_STEP_MS + CASCADE_CELL_MS) cascade = false;
+        if (dealing)
+        {
+            // the deck: a small stack that shrinks as the tiles leave it
+            if (undealt > 0) drawDeck(g, deck, l.cell, undealt);
+            // tiles in flight on top, oldest first
+            for (int[] rc : flying)
+            {
+                int idx = rc[0] * l.size + rc[1];
+                double fp = Math.min(1, (sinceOpen - idx * step) / FLIGHT_MS);
+                double move = BoardLayout.easeOut(fp);
+                double grow = easeOutBack(fp);
+                Rectangle target = l.cell(rc[0], rc[1]);
+                double cx = deck.getX() + (target.getCenterX() - deck.getX()) * move;
+                double cy = deck.getY() + (target.getCenterY() - deck.getY()) * move - Math.sin(Math.PI * move) * l.cell * 0.9; // an arc
+                double scale = 0.35 + 0.65 * grow;
+                double spin = (1 - move) * (idx % 2 == 0 ? -0.6 : 0.6);
+                Graphics2D gc = (Graphics2D) g.create();
+                try
+                {
+                    gc.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (boardAlpha * Math.min(1, 0.35 + fp))));
+                    gc.translate(cx, cy);
+                    gc.rotate(spin);
+                    gc.scale(scale, scale);
+                    gc.translate(-target.getCenterX(), -target.getCenterY());
+                    drawCell(gc, target, cells[rc[0]][rc[1]], 0, false);
+                }
+                finally
+                {
+                    gc.dispose();
+                }
+            }
+            g.setComposite(base);
+            if (sinceOpen > DEAL_MS) cascade = false;
+        }
 
         // name label over the hovered tile
         if (hov >= 0 && selected == null)
@@ -411,6 +446,27 @@ public class BoardOverlay extends Overlay
             ApiModels.Tile t = cells[hov / l.size][hov % l.size];
             if (t != null) drawHoverLabel(g, l, l.cell(hov / l.size, hov % l.size), t, hoverIn, boardAlpha);
         }
+    }
+
+    /** The deck the opening deal comes from: a few offset card backs, thinner as fewer tiles are left. */
+    private static void drawDeck(Graphics2D g, Point2D at, int cell, int left)
+    {
+        int w = Math.max(10, (int) (cell * 0.8));
+        int layers = Math.max(1, Math.min(4, (left + 9) / 10));
+        int arc = Math.max(4, w / 5);
+        for (int i = layers - 1; i >= 0; i--)
+        {
+            int x = (int) at.getX() - w / 2 + i * 2;
+            int y = (int) at.getY() - w / 2 - i * 2;
+            g.setPaint(new GradientPaint(x, y, new Color(0x3a2f22), x, y + w, new Color(0x231c15)));
+            g.fillRoundRect(x, y, w, w, arc, arc);
+            g.setStroke(new BasicStroke(1f));
+            g.setColor(GOLD_DIM);
+            g.drawRoundRect(x, y, w - 1, w - 1, arc, arc);
+        }
+        g.setColor(new Color(GOLD.getRed(), GOLD.getGreen(), GOLD.getBlue(), 160));
+        int s = Math.max(4, w / 4);
+        g.fillOval((int) at.getX() - s / 2, (int) at.getY() - s / 2 - (layers - 1) * 2, s, s);
     }
 
     private static void drawCloseButton(Graphics2D g, Rectangle c, boolean hot)
