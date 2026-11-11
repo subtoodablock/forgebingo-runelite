@@ -56,7 +56,8 @@ class ForgeBingoPanel extends PluginPanel
     /** room kept for the vertical scrollbar */
     private static final int BAR = 8;
     /** usable width inside the column */
-    private static final int INNER = PluginPanel.PANEL_WIDTH - 2 * PAD - BAR;
+    /** RuneLite's sidebar shows a little less than PANEL_WIDTH (its own border), so keep a safety margin for text. */
+    private static final int INNER = PluginPanel.PANEL_WIDTH - 2 * PAD - BAR - 14;
     /** wrap width for text inside a card (card padding + accent stripe) */
     private static final int CARD_TEXT = INNER - 22;
     private static final Color CARD = ColorScheme.DARKER_GRAY_COLOR;
@@ -429,21 +430,69 @@ class ForgeBingoPanel extends PluginPanel
                 fw.start();
             }
         }
-        JLabel title = new JLabel(wrapHtml(TileInfo.shownTitle(t), CARD_TEXT));
+        // title row: name (gold) with a small close cross on the right
+        JPanel head = new JPanel(new BorderLayout(6, 0));
+        head.setOpaque(false);
+        JLabel title = new JLabel(wrapHtml(TileInfo.shownTitle(t), CARD_TEXT - 22));
         title.setFont(FontManager.getRunescapeBoldFont());
         title.setForeground(ColorScheme.BRAND_ORANGE);
-        detail.add(left(title));
+        head.add(title, BorderLayout.CENTER);
+        JLabel close = new JLabel("x");
+        close.setFont(FontManager.getRunescapeBoldFont());
+        close.setForeground(MUTED);
+        close.setVerticalAlignment(SwingConstants.TOP);
+        close.setToolTipText("Close this tile");
+        close.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        close.addMouseListener(new MouseAdapter()
+        {
+            @Override
+            public void mouseClicked(MouseEvent e)
+            {
+                closeTile();
+            }
+
+            @Override
+            public void mouseEntered(MouseEvent e)
+            {
+                close.setForeground(Color.WHITE);
+            }
+
+            @Override
+            public void mouseExited(MouseEvent e)
+            {
+                close.setForeground(MUTED);
+            }
+        });
+        head.add(close, BorderLayout.EAST);
+        detail.add(fullWidth(head, -1));
+
+        // state + points on one line
         boolean secret = TileInfo.isSecret(t);
         String state = stateText(t);
-        if (!secret) state += "  -  " + BoardOverlay.points(TileInfo.worth(t));
         if (!t.completed && "any".equals(t.completionMode) && t.tasks.size() > 1) state += " (any one finishes it)";
-        detail.add(left(cardText(state, stateTextColour(t))));
+        JPanel stateRow = new JPanel(new BorderLayout(6, 0));
+        stateRow.setOpaque(false);
+        stateRow.add(cardText(state, stateTextColour(t), CARD_TEXT - 40), BorderLayout.CENTER);
+        if (!secret)
+        {
+            JLabel pts = new JLabel(BoardOverlay.points(TileInfo.worth(t)));
+            pts.setFont(FontManager.getRunescapeSmallFont());
+            pts.setForeground(ColorScheme.BRAND_ORANGE);
+            pts.setVerticalAlignment(SwingConstants.TOP);
+            stateRow.add(pts, BorderLayout.EAST);
+        }
+        detail.add(fullWidth(stateRow, -1));
         if (t.description != null && !t.description.isEmpty()) detail.add(left(cardText(t.description, MUTED)));
-        detail.add(gap(6));
+        if (!t.completed && t.workingOn != null && !t.workingOn.isEmpty())
+        {
+            detail.add(left(cardText("Working on it: " + workingNames(t), ColorScheme.BRAND_ORANGE)));
+        }
+        detail.add(divider());
+
         for (ApiModels.Task k : t.tasks)
         {
             boolean kDone = k.completed || t.completed;
-            detail.add(left(cardText((kDone ? "[x] " : "[ ] ") + k.description, kDone ? ColorScheme.PROGRESS_COMPLETE_COLOR : Color.WHITE)));
+            detail.add(checkRow(k.description, kDone, kDone ? ColorScheme.PROGRESS_COMPLETE_COLOR : Color.WHITE, false));
             List<ItemSlots.Slot> slots = ItemSlots.of(k);
             if (!slots.isEmpty() && !kDone)
             {
@@ -452,60 +501,49 @@ class ForgeBingoPanel extends PluginPanel
                 {
                     String name = s.itemIds.size() == 1 ? plugin.itemName(s.itemIds.get(0)) : "Any one: " + anyOf(s.itemIds);
                     String count = s.need > 1 ? "  " + s.approved + "/" + s.need : "";
-                    String pending = s.pending > 0 ? " (waiting for review)" : "";
+                    String pending = s.pending > 0 && !s.done() ? " (waiting)" : "";
                     Color c = s.done() ? ColorScheme.PROGRESS_COMPLETE_COLOR : s.pending > 0 ? ColorScheme.PROGRESS_INPROGRESS_COLOR : Color.LIGHT_GRAY;
-                    JLabel line = new JLabel(wrapHtml("   " + (s.done() ? "[x] " : "[ ] ") + name + count + pending, CARD_TEXT));
-                    line.setFont(FontManager.getRunescapeSmallFont());
-                    line.setForeground(c);
-                    detail.add(left(line));
+                    detail.add(checkRow(name + count + pending, s.done(), c, true));
                 }
             }
-            else if (k.requiredQty > 1)
+            else if (k.requiredQty > 1 && !kDone)
             {
-                JProgressBar bar = new JProgressBar(0, k.requiredQty);
-                bar.setValue(Math.min(k.requiredQty, k.approvedQty));
-                bar.setStringPainted(true);
-                bar.setFont(FontManager.getRunescapeSmallFont());
-                bar.setString(k.approvedQty + " / " + k.requiredQty + (k.pendingQty > 0 ? "  (+" + k.pendingQty + " pending)" : ""));
-                bar.setForeground(k.completed ? ColorScheme.PROGRESS_COMPLETE_COLOR : ColorScheme.BRAND_ORANGE);
-                bar.setBackground(ColorScheme.DARK_GRAY_COLOR);
-                bar.setBorder(BorderFactory.createEmptyBorder());
-                detail.add(gap(2));
-                detail.add(fullWidth(bar, 14));
+                detail.add(gap(3));
+                detail.add(progressBar(Math.min(k.requiredQty, k.approvedQty), k.requiredQty,
+                    k.approvedQty + " / " + k.requiredQty + (k.pendingQty > 0 ? "   +" + k.pendingQty + " waiting" : ""), false));
             }
-            else if (k.pendingQty > 0)
+            else if (k.pendingQty > 0 && !kDone)
             {
                 detail.add(left(cardText("Sent, waiting for a reviewer", ColorScheme.PROGRESS_INPROGRESS_COLOR)));
             }
-            if (!kDone) detail.add(left(cardText(trackingText(k), MUTED)));
-            if (!kDone && !TileInfo.isSecret(t) && k.id != null)
+            if (!kDone)
+            {
+                detail.add(gap(2));
+                detail.add(left(cardText(trackingText(k), MUTED)));
+            }
+            if (!kDone && !secret && k.id != null)
             {
                 // RuneLite sends its own proof: a game screenshot straight to this task, waiting for review
-                JButton shot = button("Send screenshot as proof", "Takes a screenshot of the game now and sends it as proof for this task");
+                JButton shot = button("Send screenshot", "Takes a screenshot of the game now and sends it as proof for this task");
                 String what = k.description == null || k.description.isEmpty() ? TileInfo.shownTitle(t) : k.description;
                 shot.addActionListener(e -> plugin.sendScreenshotProof(k.id, what));
-                detail.add(gap(2));
+                detail.add(gap(4));
                 detail.add(fullWidth(shot, 22));
             }
-            detail.add(gap(6));
+            detail.add(gap(8));
         }
-        JPanel buttons = new JPanel(new GridLayout(1, t.completed || t.id == null ? 1 : 2, 6, 0));
-        buttons.setOpaque(false);
         if (!t.completed && t.id != null)
         {
             boolean on = plugin.isWorkingOn(t);
-            JButton pin = button(on ? "Stop working on" : "Working on it",
-                on ? "Take this tile off your Working on list" : "Pin this tile to the top of the panel while you go for it");
+            JButton pin = button(on ? "Stop working on it" : "I'm working on this",
+                on ? "Take this tile off your team's Working on list" : "Show your team you're going for this tile");
+            if (on) pin.setForeground(ColorScheme.BRAND_ORANGE);
             pin.addActionListener(e -> {
                 plugin.setWorkingOn(t.id, !on);
                 if (lastBoard != null) setBoard(lastBoard, null, lastItemManager);
             });
-            buttons.add(pin);
+            detail.add(fullWidth(pin, 24));
         }
-        JButton back = button("Close", "Close this tile");
-        back.addActionListener(e -> closeTile());
-        buttons.add(back);
-        detail.add(fullWidth(buttons, 24));
         detail.setVisible(true);
         detail.revalidate();
         detail.repaint();
@@ -746,6 +784,86 @@ class ForgeBingoPanel extends PluginPanel
         l.setFont(FontManager.getRunescapeSmallFont());
         l.setForeground(MUTED);
         return l;
+    }
+
+    private static JLabel cardText(String text, Color color, int width)
+    {
+        JLabel l = new JLabel(wrapHtml(text, width));
+        l.setFont(FontManager.getRunescapeSmallFont());
+        l.setForeground(color);
+        l.setVerticalAlignment(SwingConstants.TOP);
+        return l;
+    }
+
+    /** A drawn tick box (crisp at any scale, unlike "[x]" text). */
+    private static ImageIcon checkIcon(boolean done, int s)
+    {
+        BufferedImage img = new BufferedImage(s, s, BufferedImage.TYPE_INT_ARGB);
+        java.awt.Graphics2D g = img.createGraphics();
+        try
+        {
+            g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setColor(done ? new Color(0x1d4a1d) : new Color(0, 0, 0, 120));
+            g.fillRoundRect(0, 0, s - 1, s - 1, 3, 3);
+            g.setColor(done ? ColorScheme.PROGRESS_COMPLETE_COLOR : new Color(0x7a5c22));
+            g.drawRoundRect(0, 0, s - 1, s - 1, 3, 3);
+            if (done)
+            {
+                g.setStroke(new java.awt.BasicStroke(1.6f, java.awt.BasicStroke.CAP_ROUND, java.awt.BasicStroke.JOIN_ROUND));
+                g.drawPolyline(new int[] {2, s / 2 - 1, s - 3}, new int[] {s / 2, s - 3, 2}, 3);
+            }
+        }
+        finally
+        {
+            g.dispose();
+        }
+        return new ImageIcon(img);
+    }
+
+    private static final ImageIcon BOX_ON = checkIcon(true, 11);
+    private static final ImageIcon BOX_OFF = checkIcon(false, 11);
+    private static final ImageIcon SMALL_ON = checkIcon(true, 9);
+    private static final ImageIcon SMALL_OFF = checkIcon(false, 9);
+
+    /** Tick box + wrapped text; indent = a sub-item (smaller box, pushed in). */
+    private static JPanel checkRow(String text, boolean done, Color color, boolean indent)
+    {
+        JPanel row = new JPanel(new BorderLayout(6, 0));
+        row.setOpaque(false);
+        row.setBorder(BorderFactory.createEmptyBorder(indent ? 2 : 0, indent ? 17 : 0, 0, 0));
+        JLabel box = new JLabel(indent ? (done ? SMALL_ON : SMALL_OFF) : (done ? BOX_ON : BOX_OFF));
+        box.setVerticalAlignment(SwingConstants.TOP);
+        box.setBorder(BorderFactory.createEmptyBorder(3, 0, 0, 0));
+        row.add(box, BorderLayout.WEST);
+        JLabel l = new JLabel(wrapHtml(text == null ? "" : text, CARD_TEXT - (indent ? 34 : 18)));
+        l.setFont(indent ? FontManager.getRunescapeSmallFont() : FontManager.getRunescapeFont());
+        l.setForeground(color);
+        row.add(l, BorderLayout.CENTER);
+        return fullWidth(row, -1);
+    }
+
+    /** A thin line between a card's header and its tasks. */
+    private static JComponent divider()
+    {
+        JPanel p = new JPanel();
+        p.setOpaque(false);
+        p.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createEmptyBorder(6, 0, 6, 0),
+            BorderFactory.createMatteBorder(1, 0, 0, 0, ColorScheme.MEDIUM_GRAY_COLOR)));
+        return fullWidth(p, 13);
+    }
+
+    /** Progress bar tall enough that its numbers never overlap the fill edge. */
+    private static JProgressBar progressBar(int value, int max, String text, boolean done)
+    {
+        JProgressBar bar = new JProgressBar(0, Math.max(1, max));
+        bar.setValue(value);
+        bar.setStringPainted(true);
+        bar.setFont(FontManager.getRunescapeSmallFont());
+        bar.setString(text);
+        bar.setForeground(done ? ColorScheme.PROGRESS_COMPLETE_COLOR : ColorScheme.BRAND_ORANGE);
+        bar.setBackground(ColorScheme.DARK_GRAY_COLOR);
+        bar.setBorder(BorderFactory.createEmptyBorder());
+        return fullWidth(bar, 16);
     }
 
     private static JLabel cardText(String text, Color color)

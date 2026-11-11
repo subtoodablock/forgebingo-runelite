@@ -346,8 +346,8 @@ public class ForgeBingoPlugin extends Plugin
             if (me.ok() && me.body != null)
             {
                 notifyPanel(p -> {
-                    p.setStatus(true, "Connected" + (me.body.displayName == null ? "" : " - website account " + me.body.displayName));
-                    p.setScope(ConnectionStatus.keyScope(me.body));
+                    p.setStatus(true, "Connected");
+                    p.setScope((me.body.displayName == null ? "" : "Signed in as " + me.body.displayName + "\n") + ConnectionStatus.keyScope(me.body));
                 });
                 helloPending = true;
                 helloNotBefore = 0;
