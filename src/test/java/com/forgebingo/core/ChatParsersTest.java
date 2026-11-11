@@ -7,6 +7,18 @@ import org.junit.Test;
 public class ChatParsersTest
 {
     @Test
+    public void combatTask()
+    {
+        ChatParsers.CombatTask t = ChatParsers.combatTask(
+            "Congratulations, you've completed a hard combat task: <col=06600c>Noxious Foe</col> (3 points).").get();
+        assertEquals("hard", t.tier);
+        assertEquals("Noxious Foe", t.name);
+        assertEquals("Fragment of Seren Speedrunner",
+            ChatParsers.combatTask("Congratulations, you've completed an elite combat task: Fragment of Seren Speedrunner.").get().name);
+        assertFalse(ChatParsers.combatTask("You've completed a quest: Dragon Slayer I").isPresent());
+    }
+
+    @Test
     public void collectionLogSlot()
     {
         assertEquals("Abyssal whip", ChatParsers.collectionLogItem("New item added to your collection log: Abyssal whip").get());

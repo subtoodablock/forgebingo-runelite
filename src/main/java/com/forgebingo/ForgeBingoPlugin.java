@@ -958,6 +958,13 @@ public class ForgeBingoPlugin extends Plugin
             petDetector.onCollectionLog(name, tick).ifPresent(this::reportPet);
         });
         ChatParsers.pet(msg).ifPresent(kind -> petDetector.onPetMessage(kind, tick).ifPresent(this::reportPet));
+        ChatParsers.combatTask(msg).ifPresent(ct -> {
+            // hidden for now (owner, 2026-11-11): only sent once the server takes combat_task events
+            if (!config.sendCombatTasks()) return;
+            GameEvent ev = base(GameEvent.COMBAT_TASK);
+            ev.sourceName = ct.name;
+            submit(ev, true);
+        });
         ChatParsers.killCount(msg).ifPresent(k -> {
             petDetector.onSource(k.boss, tick);
             if (!config.sendKc()) return;

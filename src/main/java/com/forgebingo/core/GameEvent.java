@@ -21,6 +21,8 @@ public final class GameEvent
     public static final String PET = "pet";
     public static final String KC = "kc";
     public static final String LEVEL = "level";
+    /** a finished Combat Achievement task (sourceName = task name); hidden until the server supports it */
+    public static final String COMBAT_TASK = "combat_task";
 
     public static final class Item
     {

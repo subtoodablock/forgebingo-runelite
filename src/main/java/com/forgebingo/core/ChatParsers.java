@@ -54,6 +54,29 @@ public final class ChatParsers
         }
     }
 
+    /** "Congratulations, you've completed a hard combat task: Noxious Foe (3 points)." (owner, 2026-11-11; hidden for now) */
+    private static final Pattern COMBAT_TASK = Pattern.compile(
+        "^Congratulations, you.?ve completed an? (easy|medium|hard|elite|master|grandmaster) combat task: (.+?)(?: \\(\\d+ points?\\))?\\.?$",
+        Pattern.CASE_INSENSITIVE);
+
+    public static final class CombatTask
+    {
+        public final String tier;
+        public final String name;
+
+        CombatTask(String tier, String name)
+        {
+            this.tier = tier;
+            this.name = name;
+        }
+    }
+
+    public static Optional<CombatTask> combatTask(String message)
+    {
+        Matcher m = COMBAT_TASK.matcher(stripTags(message));
+        return m.matches() ? Optional.of(new CombatTask(m.group(1).toLowerCase(java.util.Locale.ROOT), m.group(2).trim())) : Optional.empty();
+    }
+
     public static Optional<String> collectionLogItem(String message)
     {
         Matcher m = COLLECTION_LOG.matcher(stripTags(message));

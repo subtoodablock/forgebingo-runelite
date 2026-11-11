@@ -186,6 +186,13 @@ public interface ForgeBingoConfig extends Config
         return "";
     }
 
+    /** Combat Achievement tasks as bingo tasks (owner, 2026-11-11): built, kept hidden and off until the server is ready. */
+    @ConfigItem(keyName = "sendCombatTasks", name = "", description = "", hidden = true)
+    default boolean sendCombatTasks()
+    {
+        return false;
+    }
+
     /** The side panel's connection details are folded away. */
     @ConfigItem(keyName = "panelHeaderCollapsed", name = "", description = "", hidden = true)
     default boolean panelHeaderCollapsed()
