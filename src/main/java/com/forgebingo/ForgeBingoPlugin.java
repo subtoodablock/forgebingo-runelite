@@ -495,6 +495,34 @@ public class ForgeBingoPlugin extends Plugin
         java.util.Set<String> ids = workingOn();
         if (on) ids.add(tileId); else ids.remove(tileId);
         configManager.setConfiguration(ForgeBingoConfig.GROUP, "workingOn", String.join(",", ids));
+        // tell the server so the whole team sees it (servers before 2026-11-11 answer 404: the local list still works)
+        String team = config.activeBoardId();
+        ApiClient a = api;
+        if (team == null || team.isEmpty() || a == null) return;
+        executor.execute(() -> {
+            ApiResult<Object> r = a.setWorkingOn(team, tileId, on);
+            if (r.ok())
+            {
+                boardVersions.clear();
+                pollBoardSafely();
+            }
+            else if (r.status != 404)
+            {
+                notice("Couldn't update Working on: " + r.describe(), false);
+            }
+        });
+    }
+
+    /** Is the player working on this tile? The team list from the server when it sends one, else the local list. */
+    boolean isWorkingOn(ApiModels.Tile t)
+    {
+        if (t == null || t.id == null) return false;
+        if (t.workingOn != null)
+        {
+            for (ApiModels.WorkingOn w : t.workingOn) if (w.me) return true;
+            return false;
+        }
+        return workingOn().contains(t.id);
     }
 
     void selectBoard(String teamBoardId)
@@ -592,7 +620,14 @@ public class ForgeBingoPlugin extends Plugin
                 }
             }
             itemNames.setBoard(named);
+            notifyPanel(ForgeBingoPanel::iconsChanged); // the per-item lists can show real names now
         });
+    }
+
+    /** An item's name for the panel and overlay ("Item 526" until the names load). Any thread. */
+    String itemName(int itemId)
+    {
+        return itemNames.name(itemId);
     }
 
     // ---------- board polling ----------
@@ -1376,30 +1411,67 @@ public class ForgeBingoPlugin extends Plugin
             if (result != null && result.isMatched() && !result.duplicate)
             {
                 // tiles that were already finished before this drop: it still counts, but no second celebration
+                // what was already finished before this drop (no second celebration), and task names for the messages
                 java.util.Set<String> wasDone = new java.util.HashSet<>();
+                java.util.Set<String> taskWasDone = new java.util.HashSet<>();
+                Map<String, String> taskNames = new java.util.HashMap<>();
                 ApiModels.BoardResponse before = currentBoard();
                 if (before != null && before.tiles != null)
                 {
-                    for (ApiModels.Tile t : before.tiles) if (t != null && t.completed && t.id != null) wasDone.add(t.id);
+                    for (ApiModels.Tile t : before.tiles)
+                    {
+                        if (t == null) continue;
+                        if (t.completed && t.id != null) wasDone.add(t.id);
+                        if (t.tasks != null) for (ApiModels.Task k : t.tasks)
+                        {
+                            if (k == null || k.id == null) continue;
+                            if (k.completed) taskWasDone.add(k.id);
+                            taskNames.put(k.id, k.description);
+                        }
+                    }
                 }
+                // a match's "completed" is its TASK; the tile is finished when matchedTiles says so
+                java.util.Set<String> tileNowDone = new java.util.HashSet<>();
+                if (result.matchedTiles != null)
+                {
+                    for (ApiModels.MatchedTile mt : result.matchedTiles) if (mt != null && mt.completed && mt.tileId != null) tileNowDone.add(mt.tileId);
+                }
+                java.util.Set<String> announced = new java.util.HashSet<>();
                 for (ApiModels.Match m : result.matched)
                 {
                     String title = m.tileId == null ? null : tileTitles.get(m.tileId);
+                    String tileName = title == null ? "a tile" : title;
                     String state = "approved".equals(m.status) ? ""
                         : Boolean.FALSE.equals(m.verified) ? " - waiting for review (your name isn't verified yet)" : " - waiting for review";
                     if (m.tileId != null && wasDone.contains(m.tileId))
                     {
-                        notice("Extra drop logged for " + (title == null ? "a finished tile" : title) + " (already done)" + state, config.chatNotices());
+                        notice("Extra drop logged for " + tileName + " (already done)" + state, config.chatNotices());
                         continue;
                     }
                     String progress = m.requiredQuantity > 0 ? " (" + Math.min(m.currentQuantity, m.requiredQuantity) + "/" + m.requiredQuantity + ")" : "";
-                    notice((m.completed ? "Tile complete: " : "Counted: ") + (title == null ? "a tile" : title) + progress + state,
-                        config.chatNotices());
+                    if (m.tileId != null && tileNowDone.contains(m.tileId))
+                    {
+                        if (announced.add("tile:" + m.tileId)) notice("Tile complete: " + tileName + state, config.chatNotices());
+                    }
+                    else if (m.completed && m.taskId != null && !taskWasDone.contains(m.taskId))
+                    {
+                        String task = taskNames.get(m.taskId);
+                        String what = task == null || task.isEmpty() ? tileName : task + " (" + tileName + ")";
+                        if (announced.add("task:" + m.taskId))
+                        {
+                            notice("Task complete: " + what + state, config.chatNotices());
+                            if (config.effects()) effects.push(EffectsOverlay.Kind.TASK, task == null || task.isEmpty() ? tileName : task);
+                        }
+                    }
+                    else
+                    {
+                        notice("Counted: " + tileName + progress + state, config.chatNotices());
+                    }
                 }
                 maybeUploadScreenshot(event, result);
-                for (ApiModels.Match m : result.matched)
+                for (String tileId : tileNowDone)
                 {
-                    if (m.completed && m.tileId != null && !wasDone.contains(m.tileId)) celebrateTile(config.activeBoardId(), m.tileId, tileTitles.get(m.tileId));
+                    if (!wasDone.contains(tileId)) celebrateTile(config.activeBoardId(), tileId, tileTitles.get(tileId));
                 }
                 boardVersions.clear();
                 executor.execute(ForgeBingoPlugin.this::pollBoardSafely);

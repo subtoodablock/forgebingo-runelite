@@ -3,6 +3,7 @@ package com.forgebingo;
 import com.forgebingo.core.ApiClient;
 import com.forgebingo.core.ApiModels;
 import com.forgebingo.core.ConnectionStatus;
+import com.forgebingo.core.ItemSlots;
 import com.forgebingo.core.TileIcons;
 import com.forgebingo.core.TileInfo;
 import java.awt.BorderLayout;
@@ -354,18 +355,18 @@ class ForgeBingoPanel extends PluginPanel
         grid.repaint();
 
         nextUp.removeAll();
-        // "Working on": tiles this player pinned from a tile's card (finished ones drop off by themselves)
-        java.util.Set<String> pinned = plugin.workingOn();
+        // "Working on": open tiles anyone on the team marked (from the server), or that you marked (older servers)
         List<ApiModels.Tile> working = new java.util.ArrayList<>();
         for (ApiModels.Tile t : board.tiles)
         {
-            if (t.id == null || !pinned.contains(t.id)) continue;
-            if (t.completed) plugin.setWorkingOn(t.id, false); else working.add(t);
+            if (t.id == null || t.completed) continue;
+            boolean teamMarked = t.workingOn != null && !t.workingOn.isEmpty();
+            if (teamMarked || plugin.isWorkingOn(t)) working.add(t);
         }
         if (!working.isEmpty())
         {
             nextUp.add(gap(6));
-            nextUp.add(left(section("Working on")));
+            nextUp.add(left(section("Team is working on")));
             for (int i = 0; i < working.size(); i++)
             {
                 if (i > 0) nextUp.add(gap(4));
@@ -443,7 +444,23 @@ class ForgeBingoPanel extends PluginPanel
         {
             boolean kDone = k.completed || t.completed;
             detail.add(left(cardText((kDone ? "[x] " : "[ ] ") + k.description, kDone ? ColorScheme.PROGRESS_COMPLETE_COLOR : Color.WHITE)));
-            if (k.requiredQty > 1)
+            List<ItemSlots.Slot> slots = ItemSlots.of(k);
+            if (!slots.isEmpty() && !kDone)
+            {
+                // "one of each": every item is its own line with its own tick, like the website
+                for (ItemSlots.Slot s : slots)
+                {
+                    String name = s.itemIds.size() == 1 ? plugin.itemName(s.itemIds.get(0)) : "Any one: " + anyOf(s.itemIds);
+                    String count = s.need > 1 ? "  " + s.approved + "/" + s.need : "";
+                    String pending = s.pending > 0 ? " (waiting for review)" : "";
+                    Color c = s.done() ? ColorScheme.PROGRESS_COMPLETE_COLOR : s.pending > 0 ? ColorScheme.PROGRESS_INPROGRESS_COLOR : Color.LIGHT_GRAY;
+                    JLabel line = new JLabel(wrapHtml("   " + (s.done() ? "[x] " : "[ ] ") + name + count + pending, CARD_TEXT));
+                    line.setFont(FontManager.getRunescapeSmallFont());
+                    line.setForeground(c);
+                    detail.add(left(line));
+                }
+            }
+            else if (k.requiredQty > 1)
             {
                 JProgressBar bar = new JProgressBar(0, k.requiredQty);
                 bar.setValue(Math.min(k.requiredQty, k.approvedQty));
@@ -467,7 +484,7 @@ class ForgeBingoPanel extends PluginPanel
         buttons.setOpaque(false);
         if (!t.completed && t.id != null)
         {
-            boolean on = plugin.workingOn().contains(t.id);
+            boolean on = plugin.isWorkingOn(t);
             JButton pin = button(on ? "Stop working on" : "Working on it",
                 on ? "Take this tile off your Working on list" : "Pin this tile to the top of the panel while you go for it");
             pin.addActionListener(e -> {
@@ -600,6 +617,31 @@ class ForgeBingoPanel extends PluginPanel
         return l;
     }
 
+    /** "Hydra's eye, Hydra's fang or Hydra's heart" */
+    private String anyOf(List<Integer> ids)
+    {
+        List<String> n = new java.util.ArrayList<>();
+        for (Integer id : ids) n.add(plugin.itemName(id));
+        if (n.size() <= 1) return n.isEmpty() ? "" : n.get(0);
+        return String.join(", ", n.subList(0, n.size() - 1)) + " or " + n.get(n.size() - 1);
+    }
+
+    /** "You, Nexussy": who on the team is going for this tile (you first); "You" alone on older servers. */
+    private String workingNames(ApiModels.Tile t)
+    {
+        List<String> names = new java.util.ArrayList<>();
+        if (t.workingOn != null)
+        {
+            for (ApiModels.WorkingOn w : t.workingOn) if (w.me) names.add(0, "You"); else names.add(w.name);
+        }
+        else if (plugin.isWorkingOn(t))
+        {
+            names.add("You");
+        }
+        if (names.size() > 4) return String.join(", ", names.subList(0, 4)) + " +" + (names.size() - 4);
+        return String.join(", ", names);
+    }
+
     /** One "working on" / "closest to done" tile: a clickable card with the count on the right. */
     private JPanel nextUpRow(ApiModels.Tile t, boolean pinned)
     {
@@ -613,7 +655,10 @@ class ForgeBingoPanel extends PluginPanel
         countLabel.setFont(FontManager.getRunescapeSmallFont());
         countLabel.setForeground(ColorScheme.BRAND_ORANGE);
         int textW = CARD_TEXT - (count.isEmpty() ? 0 : countLabel.getPreferredSize().width + 6);
-        JLabel name = new JLabel(wrapHtml(t.title, Math.max(60, textW)));
+        String who = pinned ? workingNames(t) : "";
+        JLabel name = new JLabel(who.isEmpty() ? wrapHtml(t.title, Math.max(60, textW))
+            : "<html><body style='width:" + Math.max(60, textW) + "px'>" + esc(t.title)
+              + "<br><font color='#969696'>" + esc(who) + "</font></body></html>");
         name.setFont(FontManager.getRunescapeSmallFont());
         name.setForeground(TEXT);
         row.add(name, BorderLayout.CENTER);

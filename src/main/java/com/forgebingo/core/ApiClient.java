@@ -110,6 +110,16 @@ public final class ApiClient
         return get(url("v1", "boards", teamBoardId), ApiModels.BoardResponse.class);
     }
 
+    /** POST /v1/boards/{teamBoardId}/working-on: mark or unmark a tile you are going for (your team sees it). */
+    public ApiResult<Object> setWorkingOn(String teamBoardId, String tileId, boolean on)
+    {
+        java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("tileId", tileId);
+        m.put("on", on);
+        RequestBody body = RequestBody.create(JSON, gson.toJson(m));
+        return execute(builder(url("v1", "boards", teamBoardId, "working-on")).post(body).build(), Object.class);
+    }
+
     /** GET /v1/boards/{teamBoardId}/leaderboard */
     public ApiResult<ApiModels.LeaderboardResponse> leaderboard(String teamBoardId)
     {

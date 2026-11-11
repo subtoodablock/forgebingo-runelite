@@ -25,7 +25,7 @@ import net.runelite.client.ui.overlay.OverlayPosition;
  */
 public class EffectsOverlay extends Overlay
 {
-    enum Kind { TILE, LINE, BLACKOUT }
+    enum Kind { TASK, TILE, LINE, BLACKOUT }
 
     static final class Effect
     {
@@ -63,6 +63,7 @@ public class EffectsOverlay extends Overlay
         {"Victory lap", new Color(0x5cff5c), new Color(0xffd83d), "GG."},
     };
 
+    private static final long TASK_MS = 2_200;
     private static final long TILE_MS = 3_200;
     private static final long LINE_MS = 2_600;
     private static final long BLACKOUT_MS = 5_600;
@@ -125,6 +126,7 @@ public class EffectsOverlay extends Overlay
         double t = (now - e.startedAt) / (double) durationOf(e.kind);
         switch (e.kind)
         {
+            case TASK: drawTask(g, w, h, t, e.title); break;
             case TILE: drawTile(g, w, h, t, e.title); break;
             case LINE: drawLine(g, w, h, t, e.title); break;
             case BLACKOUT: drawBlackout(g, w, h, t, e.style, now - e.startedAt); break;
@@ -135,7 +137,17 @@ public class EffectsOverlay extends Overlay
 
     private static long durationOf(Kind k)
     {
-        return k == Kind.TILE ? TILE_MS : k == Kind.LINE ? LINE_MS : BLACKOUT_MS;
+        return k == Kind.TASK ? TASK_MS : k == Kind.TILE ? TILE_MS : k == Kind.LINE ? LINE_MS : BLACKOUT_MS;
+    }
+
+    /** A smaller box than the tile banner, higher up, for one task of a tile finishing (owner, 2026-11-11). */
+    private void drawTask(Graphics2D g, int w, int h, double t, String title)
+    {
+        float a = alpha(t);
+        double settle = Math.min(1, t / 0.15);
+        int y = (int) (h * 0.12 - (1 - settle) * 30);
+        banner(g, w, y, "TASK COMPLETE", title, new Color(0xffd83d), new Color(0x3a2e10), a, 18);
+        sparks(g, w / 2, y + 12, t, 12);
     }
 
     /** 0..1 fade in over the first 12% and out over the last 18%. */

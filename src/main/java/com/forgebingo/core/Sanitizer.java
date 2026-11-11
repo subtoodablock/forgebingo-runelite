@@ -78,6 +78,18 @@ public final class Sanitizer
         return in.size() <= max ? in : new ArrayList<>(in.subList(0, max));
     }
 
+    /** Item ids: at most max, positive, below 1,000,000; null in, empty out. */
+    private static List<Integer> cleanIds(List<Integer> in, int max)
+    {
+        List<Integer> out = new ArrayList<>();
+        if (in == null) return out;
+        for (Integer i : in)
+        {
+            if (i != null && i > 0 && i < 1_000_000 && out.size() < max) out.add(i);
+        }
+        return out;
+    }
+
     private static int clamp(int v)
     {
         return Math.max(0, Math.min(v, 1_000_000_000));
@@ -151,9 +163,33 @@ public final class Sanitizer
                 k.requiredQty = clamp(k.requiredQty);
                 k.approvedQty = clamp(k.approvedQty);
                 k.pendingQty = clamp(k.pendingQty);
-                // rule lists are only pre-filter data; the plugin does not need them in memory
-                k.itemIds = null;
+                // item ids drive the per-item list, the icon fallback and the screenshot pre-check; npc ids are not needed
+                k.itemIds = cleanIds(k.itemIds, 200);
                 k.npcIds = null;
+                if (k.itemGroups != null)
+                {
+                    k.itemGroups = cap(k.itemGroups, 20);
+                    k.itemGroups.replaceAll(g -> cleanIds(g, 50));
+                }
+                if (k.itemProgress != null)
+                {
+                    if (k.itemProgress.size() > 220) k.itemProgress = null;
+                    else
+                    {
+                        k.itemProgress.entrySet().removeIf(e -> e.getKey() == null || !e.getKey().matches("[ig]\\d{1,6}") || e.getValue() == null);
+                        for (ApiModels.SlotProgress p : k.itemProgress.values())
+                        {
+                            p.approved = clamp(p.approved);
+                            p.pending = clamp(p.pending);
+                        }
+                    }
+                }
+            }
+            if (t.workingOn != null)
+            {
+                t.workingOn = cap(t.workingOn, 30);
+                t.workingOn.removeIf(w -> w == null || w.name == null);
+                for (ApiModels.WorkingOn w : t.workingOn) w.name = str(w.name).length() > 32 ? str(w.name).substring(0, 32) : str(w.name);
             }
         }
         if (b.event != null)

@@ -106,6 +106,26 @@ public final class ApiModels
         public Integer points;
         /** the reviewer's reason when the newest proof was sent back, else null */
         public String rejectedReason;
+        /** "one of each": every item (or item group) is its own sub-task (servers from 2026-11-11; null before) */
+        public Boolean eachItem;
+        /** groups of item ids where any one counts for the same sub-task (like the website's "Any one: ...") */
+        public List<List<Integer>> itemGroups;
+        /** per sub-task progress, keyed like the server's item_slot: "i&lt;itemId&gt;" or "g&lt;groupIndex&gt;" */
+        public java.util.Map<String, SlotProgress> itemProgress;
+    }
+
+    public static final class SlotProgress
+    {
+        public int approved;
+        public int pending;
+    }
+
+    /** A teammate going for a tile (the "Working on it" button). */
+    public static final class WorkingOn
+    {
+        public String name;
+        /** true for the player whose key fetched the board */
+        public boolean me;
     }
 
     public static final class Tile
@@ -124,6 +144,8 @@ public final class ApiModels
         public String iconUrl;
         /** The website's emoji icon (servers from 2026-11-11), else null; mapped to an item by TileIcons. */
         public String iconEmoji;
+        /** teammates who marked this tile "working on" (null from servers before 2026-11-11: use the local list) */
+        public List<WorkingOn> workingOn;
         public String completionMode;
         /** a hidden secret tile (null from older servers: see TileInfo.isSecret) */
         public Boolean secret;

@@ -32,12 +32,36 @@ public final class ItemNames
     public void setCatalogue(Collection<ApiModels.CatalogueItem> items)
     {
         catalogue = index(items);
+        catalogueNames = names(items);
     }
 
     /** Replace the board part: names of the item ids the board's tasks ask for (from the item definitions). */
     public void setBoard(Collection<ApiModels.CatalogueItem> items)
     {
         board = index(items);
+        boardNames = names(items);
+    }
+
+    private volatile Map<Integer, String> catalogueNames = new HashMap<>();
+    private volatile Map<Integer, String> boardNames = new HashMap<>();
+
+    /** The item's name (board items first, then the catalogue), or "Item &lt;id&gt;" when unknown. */
+    public String name(int itemId)
+    {
+        String n = boardNames.get(itemId);
+        if (n == null) n = catalogueNames.get(itemId);
+        return n == null ? "Item " + itemId : n;
+    }
+
+    private static Map<Integer, String> names(Collection<ApiModels.CatalogueItem> items)
+    {
+        Map<Integer, String> m = new HashMap<>();
+        if (items == null) return m;
+        for (ApiModels.CatalogueItem i : items)
+        {
+            if (i != null && i.name != null && i.id >= 0) m.putIfAbsent(i.id, i.name);
+        }
+        return m;
     }
 
     public int size()

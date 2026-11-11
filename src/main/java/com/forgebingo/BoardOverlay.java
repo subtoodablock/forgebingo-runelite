@@ -488,6 +488,18 @@ public class BoardOverlay extends Overlay
             }
         }
 
+        // someone on the team is going for this tile: a small orange flag in the top-left corner
+        if (st != TileInfo.State.DONE && t.workingOn != null && !t.workingOn.isEmpty() && r.width >= 14)
+        {
+            int s = Math.max(5, Math.min(9, r.width / 5));
+            int fx = r.x + 3;
+            int fy = r.y + 3;
+            g.setColor(new Color(0, 0, 0, 160));
+            g.fillOval(fx - 1, fy - 1, s + 2, s + 2);
+            g.setColor(BAR_FILL);
+            g.fillOval(fx, fy, s, s);
+        }
+
         if (glow > 0 || selected)
         {
             float a = selected ? 1f : (float) glow;
@@ -654,6 +666,12 @@ public class BoardOverlay extends Overlay
         {
             y = lines(g, small, wrap(sm, t.description, maxW, 3), MUTED, x, y + 3, dry);
         }
+        if (!t.completed && t.workingOn != null && !t.workingOn.isEmpty())
+        {
+            List<String> who = new ArrayList<>();
+            for (ApiModels.WorkingOn w : t.workingOn) if (w.me) who.add(0, "You"); else who.add(w.name);
+            y = lines(g, small, wrap(sm, "Working on it: " + String.join(", ", who), maxW, 2), BAR_FILL, x, y + 3, dry);
+        }
 
         List<ApiModels.Task> tasks = t.tasks == null ? new ArrayList<>() : t.tasks;
         if (!tasks.isEmpty())
@@ -675,18 +693,48 @@ public class BoardOverlay extends Overlay
             boolean kDone = k.completed || t.completed;
             List<String> desc = wrap(tm, k.description == null ? "" : k.description, maxW - box - 6, compact ? 1 : 2);
             List<String> how = kDone || compact ? new ArrayList<>() : wrap(sm, ForgeBingoPanel.trackingText(k), maxW - box - 6, 2);
-            int need = desc.size() * tm.getHeight() + how.size() * sm.getHeight() + (k.requiredQty > 1 ? 15 : 0) + (compact ? 3 : 6);
-            if (y + need > bottom - 2 * sm.getHeight() - 6 && shown > 0) break;
+            // exactly what the drawing below uses (lines() advances ascent + descent per line)
+            int tLine = tm.getAscent() + tm.getDescent();
+            int sLine = sm.getAscent() + sm.getDescent();
+            // "one of each" tasks list every item with its own tick instead of one bar
+            List<com.forgebingo.core.ItemSlots.Slot> slots = kDone ? java.util.Collections.emptyList() : com.forgebingo.core.ItemSlots.of(k);
+            boolean bar = slots.isEmpty() && k.requiredQty > 1;
+            boolean pendingLine = slots.isEmpty() && k.requiredQty <= 1 && k.pendingQty > 0 && !kDone;
+            int need = desc.size() * tLine + (bar ? 15 : 0) + slots.size() * (sLine + 2) + (pendingLine ? sLine : 0)
+                + 1 + how.size() * sLine + (compact ? 3 : 6);
+            // keep room for the closing hint, plus the "+N more" line only when another task would follow this one
+            boolean last = shown == tasks.size() - 1;
+            int reserve = sm.getHeight() + 4 + (last ? 0 : sm.getHeight() + 2);
+            if (y + need > bottom - reserve && shown > 0) break;
             if (!dry) drawCheckbox(g, x, y + 2, box, kDone);
             int tx = x + box + 6;
             y = lines(g, body, desc, kDone ? DONE_TICK : TEXT, tx, y, dry);
-            if (k.requiredQty > 1)
+            if (!slots.isEmpty())
+            {
+                int sub = 8;
+                for (com.forgebingo.core.ItemSlots.Slot s : slots)
+                {
+                    y += 2;
+                    String name = s.itemIds.size() == 1 ? plugin.itemName(s.itemIds.get(0)) : "Any one of " + s.itemIds.size() + " items";
+                    String count = s.need > 1 ? s.approved + "/" + s.need : "";
+                    Color c = s.done() ? DONE_TICK : s.pending > 0 ? PENDING : TEXT;
+                    if (!dry)
+                    {
+                        drawCheckbox(g, tx + 2, y + 2, sub, s.done());
+                        int cw = count.isEmpty() ? 0 : sm.stringWidth(count) + 6;
+                        text(g, small, ellipsize(sm, name + (s.pending > 0 && !s.done() ? " (waiting)" : ""), maxW - box - 6 - sub - 6 - cw), c, tx + sub + 8, y + sm.getAscent(), false);
+                        if (cw > 0) text(g, small, count, MUTED, x + maxW - cw + 6, y + sm.getAscent(), false);
+                    }
+                    y += sLine;
+                }
+            }
+            else if (bar)
             {
                 y += 3;
                 if (!dry) drawBar(g, sm, tx, y, maxW - box - 6, k);
                 y += 12;
             }
-            else if (k.pendingQty > 0 && !kDone)
+            else if (pendingLine)
             {
                 y = lines(g, small, java.util.Collections.singletonList("Sent - waiting for a reviewer"), PENDING, tx, y, dry);
             }
