@@ -92,6 +92,8 @@ class ForgeBingoPanel extends PluginPanel
     private ApiModels.BoardResponse lastBoard;
     private ItemManager lastItemManager;
     private javax.swing.Timer iconRedraw;
+    /** "your team finished X" card with fireworks (teammates' tiles) */
+    private final JPanel teamNews = column();
     /** the fireworks playing on an open finished tile */
     private Fireworks fireworks;
     private boolean updatingBox;
@@ -130,6 +132,8 @@ class ForgeBingoPanel extends PluginPanel
         identity.add(message("Log in to the game so we can check which character you're playing.", ConnectionStatus.Level.INFO));
         add(content, gap(6));
         add(content, identity);
+        teamNews.setVisible(false);
+        add(content, teamNews);
 
         // --- board picker and actions
         add(content, gap(4));
@@ -257,6 +261,37 @@ class ForgeBingoPanel extends PluginPanel
         }
         if (selected != null) boardBox.setSelectedItem(selected);
         updatingBox = false;
+    }
+
+    /**
+     * A teammate finished a tile: a fireworks card under the header for a few seconds (instead of a banner over the
+     * game, which is only for tiles you finish yourself).
+     */
+    void teamFinished(String tileTitle)
+    {
+        teamNews.removeAll();
+        Fireworks fw = new Fireworks("TEAM TILE DONE!");
+        JPanel card = card(ColorScheme.PROGRESS_COMPLETE_COLOR);
+        card.add(fullWidth(fw, Fireworks.HEIGHT));
+        card.add(left(cardText("Your team finished " + (tileTitle == null || tileTitle.isEmpty() ? "a tile" : tileTitle) + "!", Color.WHITE)));
+        teamNews.add(gap(6));
+        teamNews.add(card);
+        teamNews.setVisible(true);
+        teamNews.revalidate();
+        teamNews.repaint();
+        fw.start();
+        javax.swing.Timer hide = new javax.swing.Timer(9000, e -> {
+            if (teamNews.getComponentCount() > 1 && teamNews.getComponent(1) == card)
+            {
+                fw.stop();
+                teamNews.removeAll();
+                teamNews.setVisible(false);
+                teamNews.revalidate();
+                teamNews.repaint();
+            }
+        });
+        hide.setRepeats(false);
+        hide.start();
     }
 
     /** Notices are shown in the game chat only (the sidebar list was removed); kept so callers stay simple. */
@@ -796,10 +831,17 @@ class ForgeBingoPanel extends PluginPanel
         private long started;
         private int bursts;
 
+        private final String message;
+
         Fireworks()
         {
+            this("TILE COMPLETE!");
+        }
+
+        Fireworks(String message)
+        {
+            this.message = message;
             setOpaque(false);
-            setToolTipText("Tile complete!");
         }
 
         void start()
@@ -865,7 +907,7 @@ class ForgeBingoPanel extends PluginPanel
                 // the banner settles in as the sparks fade
                 long t = System.currentTimeMillis() - started;
                 float k = Math.min(1f, Math.max(0f, (t - 250) / 500f));
-                String msg = "TILE COMPLETE!";
+                String msg = message;
                 g.setFont(FontManager.getRunescapeBoldFont());
                 java.awt.FontMetrics fm = g.getFontMetrics();
                 int x = (getWidth() - fm.stringWidth(msg)) / 2;

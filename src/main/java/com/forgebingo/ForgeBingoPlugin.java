@@ -19,6 +19,7 @@ import com.forgebingo.core.Sanitizer;
 import com.forgebingo.core.ScreenshotStamp;
 import com.forgebingo.core.WindowShot;
 import com.forgebingo.core.SourceClassifier;
+import com.forgebingo.core.TileInfo;
 import com.google.gson.Gson;
 import com.google.inject.Provides;
 import java.awt.image.BufferedImage;
@@ -700,9 +701,15 @@ public class ForgeBingoPlugin extends Plugin
         int size = board.size();
         int before = seen.size();
         int linesBefore = countLines(seen, board, size);
+        // Newly finished tiles found on a refresh were finished by a teammate (your own drops celebrate the moment the
+        // server answers, which marks them seen first): no on-screen banner, a fireworks card in the side panel instead.
         for (ApiModels.Tile t : board.tiles)
         {
-            if (t.completed && t.id != null && !seen.contains(t.id)) celebrateTile(teamBoardId, t.id, t.title);
+            if (t.completed && t.id != null && seen.add(t.id) && config.effects())
+            {
+                String title = TileInfo.shownTitle(t);
+                notifyPanel(p -> p.teamFinished(title));
+            }
         }
         seen.addAll(now);
         int linesAfter = countLines(seen, board, size);
@@ -1187,12 +1194,13 @@ public class ForgeBingoPlugin extends Plugin
     {
         ApiModels.BoardResponse b = currentBoard();
         if (b == null || b.tiles == null) return true;
+        // finished tiles count too: drops keep counting (with proof) until the bingo is over (owner, 2026-11-11)
         for (ApiModels.Tile t : b.tiles)
         {
-            if (t == null || t.completed || t.tasks == null) continue;
+            if (t == null || t.tasks == null) continue;
             for (ApiModels.Task k : t.tasks)
             {
-                if (k == null || k.completed) continue;
+                if (k == null) continue;
                 if (k.itemIds != null && !k.itemIds.isEmpty())
                 {
                     if (ev.items == null) continue;
@@ -1367,19 +1375,31 @@ public class ForgeBingoPlugin extends Plugin
             automationNoticeShown = false;
             if (result != null && result.isMatched() && !result.duplicate)
             {
+                // tiles that were already finished before this drop: it still counts, but no second celebration
+                java.util.Set<String> wasDone = new java.util.HashSet<>();
+                ApiModels.BoardResponse before = currentBoard();
+                if (before != null && before.tiles != null)
+                {
+                    for (ApiModels.Tile t : before.tiles) if (t != null && t.completed && t.id != null) wasDone.add(t.id);
+                }
                 for (ApiModels.Match m : result.matched)
                 {
                     String title = m.tileId == null ? null : tileTitles.get(m.tileId);
-                    String progress = m.requiredQuantity > 0 ? " (" + m.currentQuantity + "/" + m.requiredQuantity + ")" : "";
                     String state = "approved".equals(m.status) ? ""
-                        : Boolean.FALSE.equals(m.verified) ? " - awaiting review (your RSN is not verified)" : " - awaiting review";
+                        : Boolean.FALSE.equals(m.verified) ? " - waiting for review (your name isn't verified yet)" : " - waiting for review";
+                    if (m.tileId != null && wasDone.contains(m.tileId))
+                    {
+                        notice("Extra drop logged for " + (title == null ? "a finished tile" : title) + " (already done)" + state, config.chatNotices());
+                        continue;
+                    }
+                    String progress = m.requiredQuantity > 0 ? " (" + Math.min(m.currentQuantity, m.requiredQuantity) + "/" + m.requiredQuantity + ")" : "";
                     notice((m.completed ? "Tile complete: " : "Counted: ") + (title == null ? "a tile" : title) + progress + state,
                         config.chatNotices());
                 }
                 maybeUploadScreenshot(event, result);
                 for (ApiModels.Match m : result.matched)
                 {
-                    if (m.completed && m.tileId != null) celebrateTile(config.activeBoardId(), m.tileId, tileTitles.get(m.tileId));
+                    if (m.completed && m.tileId != null && !wasDone.contains(m.tileId)) celebrateTile(config.activeBoardId(), m.tileId, tileTitles.get(m.tileId));
                 }
                 boardVersions.clear();
                 executor.execute(ForgeBingoPlugin.this::pollBoardSafely);
