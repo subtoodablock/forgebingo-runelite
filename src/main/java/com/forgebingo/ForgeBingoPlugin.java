@@ -1037,7 +1037,7 @@ public class ForgeBingoPlugin extends Plugin
      */
     private void watchSpecialLoot(String raw, int tick)
     {
-        if (raw == null || !config.screenshotOnMatch()) return;
+        if (raw == null) return;
         String msg = net.runelite.client.util.Text.removeTags(raw).replace(' ', ' ').trim();
         if (msg.equalsIgnoreCase("Special loot:"))
         {
@@ -1417,7 +1417,7 @@ public class ForgeBingoPlugin extends Plugin
             return;
         }
         log.debug("queue event {} {}", ev.sourceType, ev.label());
-        if (maybeScreenshot && config.screenshotOnMatch() && couldCount(ev))
+        if (maybeScreenshot && couldCount(ev))
         {
             captureScreenshot(ev.id, chestWindow ? CHEST_SHOT_DELAYS_MS : DROP_SHOT_DELAYS_MS, chestWindow);
         }
@@ -1729,7 +1729,7 @@ public class ForgeBingoPlugin extends Plugin
      */
     private void maybeUploadScreenshot(GameEvent event, ApiModels.EventResult result, int attempt)
     {
-        if (!config.screenshotOnMatch() || result == null || !result.isMatched() || result.duplicate)
+        if (result == null || !result.isMatched() || result.duplicate)
         {
             screenshots.remove(event.id);
             return;
