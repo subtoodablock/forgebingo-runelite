@@ -106,6 +106,54 @@ public final class TileIcons
         return null;
     }
 
+    /** Skill name (as the plugin reports it) -> that skill's cape, for level-up tasks. */
+    private static final Map<String, Integer> SKILL = new LinkedHashMap<>();
+
+    static
+    {
+        String[] names = {"attack", "strength", "defence", "ranged", "prayer", "magic", "runecraft", "hitpoints", "agility", "herblore",
+            "thieving", "crafting", "fletching", "slayer", "construction", "mining", "smithing", "fishing", "cooking", "firemaking",
+            "woodcutting", "farming"};
+        int[] capes = {9747, 9750, 9753, 9756, 9759, 9762, 9765, 9768, 9771, 9774, 9777, 9780, 9783, 9786, 9789, 9792, 9795, 9798,
+            9801, 9804, 9807, 9810};
+        for (int i = 0; i < names.length; i++) SKILL.put(names[i], capes[i]);
+        SKILL.put("hunter", 9948);
+        SKILL.put("sailing", 13280);
+        SKILL.put("overall", 13280);            // Max cape
+    }
+
+    /**
+     * The picture for one task: its own item, else its skill's cape (level-ups), else a boss/activity named in its
+     * text, else the tile's picture. Null only when nothing at all fits (the panel then draws a tick box).
+     */
+    public static Integer taskItem(ApiModels.Task k, ApiModels.Tile t)
+    {
+        if (k != null)
+        {
+            if (k.itemIds != null) for (Integer id : k.itemIds) if (id != null && id > 0) return id;
+            if (k.skill != null)
+            {
+                Integer cape = SKILL.get(k.skill.toLowerCase(Locale.ROOT));
+                if (cape != null) return cape;
+            }
+            String text = " " + ((k.description == null ? "" : k.description) + " " + (k.sourceKey == null ? "" : k.sourceKey.replace('_', ' ')))
+                .toLowerCase(Locale.ROOT) + " ";
+            for (Map.Entry<String, Integer> e : SKILL.entrySet()) if (containsWord(text, e.getKey())) return e.getValue();
+            for (Map.Entry<String, Integer> e : TITLE.entrySet()) if (containsWord(text, e.getKey())) return e.getValue();
+        }
+        if (t == null) return null;
+        // XP tasks say "Team gains 100,000 XP"; the skill is only in the tile's name ("100K Fishing XP")
+        String title = " " + (t.title == null ? "" : t.title.toLowerCase(Locale.ROOT)) + " ";
+        for (Map.Entry<String, Integer> e : SKILL.entrySet()) if (containsWord(title, e.getKey())) return e.getValue();
+        return t.iconItemId != null ? t.iconItemId : null;
+    }
+
+    /** Last resort for a task with nothing of its own: the tile's own item, else an item picked from its title/emoji. */
+    public static Integer taskFallback(ApiModels.Tile t)
+    {
+        return t == null ? null : t.iconItemId != null ? t.iconItemId : fallbackItem(t);
+    }
+
     /** "cox" matches "CoX run" but not "coxswain"; multi-word keys match as a phrase. */
     private static boolean containsWord(String padded, String key)
     {

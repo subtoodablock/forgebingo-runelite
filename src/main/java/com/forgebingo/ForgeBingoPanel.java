@@ -759,11 +759,22 @@ class ForgeBingoPanel extends PluginPanel
         // icon + name + count
         JPanel top = new JPanel(new BorderLayout(6, 0));
         top.setOpaque(false);
+        // no box behind the icon: the item sits straight on the card, like the website
         JPanel iconBox = new JPanel(new BorderLayout());
-        iconBox.setBackground(new Color(0x111111));
-        iconBox.setBorder(BorderFactory.createLineBorder(new Color(0x2a2a2a)));
+        iconBox.setOpaque(false);
+        iconBox.setBorder(BorderFactory.createEmptyBorder());
         iconBox.setPreferredSize(new Dimension(28, 28));
-        if (!items.isEmpty()) iconBox.add(itemIcon(items.get(0), 22), BorderLayout.CENTER);
+        // task picture: its item / skill / named boss, else the tile's uploaded picture, else an item from the tile
+        Integer taskPic = secret ? null : TileIcons.taskItem(k, t);
+        BufferedImage tilePic = taskPic == null && !secret && t.hasIcon && t.iconUrl != null && t.iconEmoji == null ? plugin.tileImage(t.iconUrl) : null;
+        if (taskPic == null && tilePic == null && !secret) taskPic = TileIcons.taskFallback(t);
+        if (taskPic != null) iconBox.add(itemIcon(taskPic, 22), BorderLayout.CENTER);
+        else if (tilePic != null)
+        {
+            JLabel pic = new JLabel(new ImageIcon(fit(tilePic, 22)));
+            pic.setHorizontalAlignment(SwingConstants.CENTER);
+            iconBox.add(pic, BorderLayout.CENTER);
+        }
         else
         {
             JLabel tick = new JLabel(done ? BOX_ON : BOX_OFF);
