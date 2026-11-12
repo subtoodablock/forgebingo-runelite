@@ -192,17 +192,17 @@ public class ForgeBingoPlugin extends Plugin
      */
     private static final class Screenshot
     {
-        final byte[] raw;
+        /** the frames, in the order they were asked for (a chest's loot window is taken twice); gaps are null */
+        final byte[][] raw;
+        final java.time.ZonedDateTime[] taken;
         final long at;
-        final String player;
-        final java.time.ZonedDateTime taken;
+        volatile String player;
 
-        Screenshot(byte[] raw, long at, String player, java.time.ZonedDateTime taken)
+        Screenshot(int shots, long at)
         {
-            this.raw = raw;
+            this.raw = new byte[shots][];
+            this.taken = new java.time.ZonedDateTime[shots];
             this.at = at;
-            this.player = player;
-            this.taken = taken;
         }
     }
 
@@ -995,7 +995,9 @@ public class ForgeBingoPlugin extends Plugin
         String tier = GameEvent.CLUE.equals(type) ? SourceClassifier.clueTier(e.getName()) : null;
         ev.sourceName = tier != null ? tier : e.getName();
         addItems(ev, e.getItems());
-        submit(ev, true);
+        // Raid, Barrows, Moons and other reward chests post their loot as the loot window opens (owner, 2026-11-12):
+        // the proof is that window, taken twice a moment apart so one of the two shows it fully drawn.
+        submit(ev, true, !GameEvent.CLUE.equals(type));
     }
 
     /** "You pick the Master Farmer's pocket." (also "You pick the Elf's pocket.") */
@@ -1333,6 +1335,12 @@ public class ForgeBingoPlugin extends Plugin
 
     private void submit(GameEvent ev, boolean maybeScreenshot)
     {
+        submit(ev, maybeScreenshot, false);
+    }
+
+    /** @param chestWindow the loot came from a reward chest whose loot window is on screen right now */
+    private void submit(GameEvent ev, boolean maybeScreenshot, boolean chestWindow)
+    {
         if (!running || queue == null || !Sanitizer.validRsn(ev.rsn) || ev.accountHash == null || api == null || !api.configured())
         {
             return;
@@ -1351,7 +1359,7 @@ public class ForgeBingoPlugin extends Plugin
         log.debug("queue event {} {}", ev.sourceType, ev.label());
         if (maybeScreenshot && config.screenshotOnMatch() && couldCount(ev))
         {
-            captureScreenshot(ev.id);
+            captureScreenshot(ev.id, chestWindow ? CHEST_SHOT_DELAYS_MS : DROP_SHOT_DELAYS_MS);
         }
         List<QueuedEvent> evicted = queue.add(new QueuedEvent(ev, System.currentTimeMillis()));
         for (QueuedEvent q : evicted) notice("Queue full, dropped oldest event: " + q.event.label(), true);
@@ -1416,30 +1424,50 @@ public class ForgeBingoPlugin extends Plugin
         return false;
     }
 
-    private void captureScreenshot(String eventId)
+    private void captureScreenshot(String eventId, long[] delays)
     {
         // only in game, and never with the bank PIN keypad on screen (its layout would be in the proof)
         if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen()) return;
-        // marked before the frame arrives: the server's answer can come back first, and the upload waits for this
-        shotsInProgress.add(eventId);
-        // Wait ~2 game ticks before taking it (owner, 2026-11-12): by then the drop's chat message, the loot on the
-        // ground and the collection log pop-up are all on screen, so the proof shows the drop clearly.
-        executor.schedule(() -> requestDropFrame(eventId), SCREENSHOT_DELAY_MS, TimeUnit.MILLISECONDS);
+        long now = System.currentTimeMillis();
+        screenshots.values().removeIf(s -> now - s.at > SCREENSHOT_TTL_MILLIS);
+        // full: drop the oldest instead of skipping this one (the newest drop is the likeliest to count)
+        while (screenshots.size() >= MAX_SCREENSHOTS)
+        {
+            String oldest = null;
+            long at = Long.MAX_VALUE;
+            for (Map.Entry<String, Screenshot> s : screenshots.entrySet()) if (s.getValue().at < at) { at = s.getValue().at; oldest = s.getKey(); }
+            if (oldest == null) break;
+            screenshots.remove(oldest);
+        }
+        screenshots.put(eventId, new Screenshot(delays.length, now));
+        for (int i = 0; i < delays.length; i++)
+        {
+            int index = i;
+            // marked before the frame arrives: the server's answer can come back first, and the upload waits for this
+            shotsInProgress.add(eventId + "#" + index);
+            executor.schedule(() -> requestDropFrame(eventId, index), delays[i], TimeUnit.MILLISECONDS);
+        }
     }
 
-    /** milliseconds between spotting a drop and taking its screenshot */
-    private static final long SCREENSHOT_DELAY_MS = 1200;
+    /**
+     * Milliseconds between spotting a drop and taking its screenshot. ~2 game ticks (owner, 2026-11-12): by then
+     * the drop's chat message, the loot on the ground and the collection log pop-up are all on screen.
+     */
+    private static final long[] DROP_SHOT_DELAYS_MS = {1200};
+    /** A reward chest's loot window: once as it opens and again a little later (sent as "1 of 2" and "2 of 2"). */
+    private static final long[] CHEST_SHOT_DELAYS_MS = {300, 1800};
     /** minimum time between "Send screenshot" proofs */
     private static final long SCREENSHOT_COOLDOWN_MS = 5000;
     private volatile long lastProofShotAt;
 
-    private void requestDropFrame(String eventId)
+    private void requestDropFrame(String eventId, int index)
     {
-        if (!running) { shotsInProgress.remove(eventId); return; }
+        String key = eventId + "#" + index;
+        if (!running || !screenshots.containsKey(eventId)) { shotsInProgress.remove(key); return; }
         drawManager.requestNextFrameListener(image -> {
             if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen())
             {
-                shotsInProgress.remove(eventId);
+                shotsInProgress.remove(key);
                 return;
             }
             // the player's name, read on the client thread as the frame is captured
@@ -1456,18 +1484,11 @@ public class ForgeBingoPlugin extends Plugin
                 // stored unstamped; each team's copy is stamped with its own code and tiles when it is sent
                 byte[] shot = ScreenshotEncode.jpeg(img, ApiClient.MAX_SCREENSHOT_BYTES);
                 if (shot == null) return;
-                long now = System.currentTimeMillis();
-                screenshots.values().removeIf(s -> now - s.at > SCREENSHOT_TTL_MILLIS);
-                // full: drop the oldest instead of skipping this one (the newest drop is the likeliest to count)
-                while (screenshots.size() >= MAX_SCREENSHOTS)
-                {
-                    String oldest = null;
-                    long at = Long.MAX_VALUE;
-                    for (Map.Entry<String, Screenshot> s : screenshots.entrySet()) if (s.getValue().at < at) { at = s.getValue().at; oldest = s.getKey(); }
-                    if (oldest == null) break;
-                    screenshots.remove(oldest);
-                }
-                screenshots.put(eventId, new Screenshot(shot, now, player, taken));
+                Screenshot s = screenshots.get(eventId);
+                if (s == null) return; // the server already said this drop does not count
+                s.player = player;
+                s.taken[index] = taken;
+                s.raw[index] = shot;
             }
             catch (Exception ex)
             {
@@ -1475,7 +1496,7 @@ public class ForgeBingoPlugin extends Plugin
             }
             finally
             {
-                shotsInProgress.remove(eventId);
+                shotsInProgress.remove(key);
             }
         });
         });
@@ -1641,15 +1662,19 @@ public class ForgeBingoPlugin extends Plugin
             screenshots.remove(event.id);
             return;
         }
-        Screenshot s = screenshots.remove(event.id);
-        if (s == null)
+        boolean pending = false;
+        for (String key : shotsInProgress) if (key.startsWith(event.id + "#")) { pending = true; break; }
+        if (pending && attempt < 24 && running)
         {
-            if (shotsInProgress.contains(event.id) && attempt < 20 && running)
-            {
-                executor.schedule(() -> maybeUploadScreenshot(event, result, attempt + 1), 250, TimeUnit.MILLISECONDS);
-            }
+            executor.schedule(() -> maybeUploadScreenshot(event, result, attempt + 1), 250, TimeUnit.MILLISECONDS);
             return;
         }
+        Screenshot s = screenshots.remove(event.id);
+        if (s == null) return;
+        // the frames that were really taken (a frame is skipped when the bank PIN is up or the game logged out)
+        List<Integer> shots = new ArrayList<>();
+        for (int i = 0; i < s.raw.length; i++) if (s.raw[i] != null && s.taken[i] != null) shots.add(i);
+        if (shots.isEmpty()) return;
         // One upload per team, attached to that team's submissions from matched[].submissionId.
         Map<String, List<String>> byTeam = new java.util.LinkedHashMap<>();
         // the file is named after the (first) task this drop counted for, e.g. big-boners_3f2a9c1e.png
@@ -1679,7 +1704,6 @@ public class ForgeBingoPlugin extends Plugin
         {
             if (m.teamId != null && m.tileId != null) tilesByTeam.computeIfAbsent(m.teamId, k -> new ArrayList<>()).add(m.tileId);
         }
-        String capturedAt = s.taken.withZoneSameInstant(java.time.ZoneOffset.UTC).toInstant().toString();
         for (Map.Entry<String, List<String>> t : byTeam.entrySet())
         {
             try
@@ -1697,14 +1721,25 @@ public class ForgeBingoPlugin extends Plugin
                     if (title != null && !title.isEmpty() && !names.contains(title)) names.add(title);
                 }
                 String tiles = names.isEmpty() ? null : names.size() <= 2 ? String.join(", ", names) : names.get(0) + ", " + names.get(1) + " +" + (names.size() - 2);
-                BufferedImage img = ImageIO.read(new java.io.ByteArrayInputStream(s.raw));
-                if (img == null) continue;
-                byte[] stamped = ScreenshotEncode.jpeg(ScreenshotStamp.stamp(img, kw, s.taken, s.player, tiles), ApiClient.MAX_SCREENSHOT_BYTES);
-                if (stamped == null) continue;
-                ApiResult<ApiModels.ProofResponse> r = api.uploadProof(t.getKey(), stamped, t.getValue(), kw, capturedAt, labels.get(t.getKey()));
-                if (!r.ok())
+                for (int n = 0; n < shots.size(); n++)
                 {
-                    notice("Screenshot upload failed: " + r.describe(), true);
+                    int i = shots.get(n);
+                    // several frames of one drop say which they are, on the picture and in the file's name
+                    String part = shots.size() > 1 ? (n + 1) + " of " + shots.size() : null;
+                    String stampTile = part == null ? tiles : tiles == null ? part : tiles + " (" + part + ")";
+                    String label = labels.get(t.getKey());
+                    if (part != null) label = (label == null || label.isEmpty() ? "proof" : label) + " " + part;
+                    BufferedImage img = ImageIO.read(new java.io.ByteArrayInputStream(s.raw[i]));
+                    if (img == null) continue;
+                    byte[] stamped = ScreenshotEncode.jpeg(ScreenshotStamp.stamp(img, kw, s.taken[i], s.player, stampTile), ApiClient.MAX_SCREENSHOT_BYTES);
+                    if (stamped == null) continue;
+                    String capturedAt = s.taken[i].withZoneSameInstant(java.time.ZoneOffset.UTC).toInstant().toString();
+                    ApiResult<ApiModels.ProofResponse> r = api.uploadProof(t.getKey(), stamped, t.getValue(), kw, capturedAt, label);
+                    if (!r.ok())
+                    {
+                        notice("Screenshot upload failed: " + r.describe(), true);
+                        break;
+                    }
                 }
             }
             catch (java.io.IOException ex)

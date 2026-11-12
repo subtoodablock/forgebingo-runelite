@@ -78,7 +78,7 @@ final class PanelImps extends LayerUI<JComponent>
         ItemID.ANCESTRAL_HAT, ItemID.ANCESTRAL_ROBE_TOP, ItemID.ANCESTRAL_ROBE_BOTTOM,
         ItemID.TORVA_HELM, ItemID.OATHPLATE_HELM, ItemID.VOIDWAKER, ItemID.DRAGON_WARHAMMER,
         ItemID.DRAGON_CLAWS, ItemID.ABYSSAL_BLUDGEON, ItemID.NOXIOUS_HALBERD, ItemID.EYE_OF_AYAK,
-        ItemID.SANGUINESTI_STAFF, ItemID.TOXIC_BLOWPIPE,
+        ItemID.SANGUINESTI_STAFF, ItemID.TOXIC_BLOWPIPE, ItemID.ASCENSION_CROSSBOWS, 34717 /* Obligator */,
     };
     private static final float RAIN_GRAVITY = 240f;
     private static final float RAIN_MAX_FALL = 170f;
