@@ -55,7 +55,8 @@ you don't walk where you click; it closes by itself when a monster attacks you (
 - **Screenshots:** screenshot on matched drop (on), include sidebar in screenshots (off)
 - **Celebrations** and **chat notices**
 - **Board overlay:** hotkey, close when attacked, animations
-- **Side panel:** font (clean or RuneScape), animations (on), imps that wander over the panel (on)
+- **Side panel:** font (clean or RuneScape), animations (on), imps that wander over the panel (on),
+  item rain: famous drops that fall down the panel now and then, which you can catch with the mouse (on)
 
 ## Building
 

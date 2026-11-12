@@ -135,6 +135,12 @@ class ForgeBingoPanel extends PluginPanel
         imps.setEnabled(on);
     }
 
+    /** Switches the falling items on or off (the "Side panel item rain" setting). */
+    void setRain(boolean on)
+    {
+        imps.setRain(on);
+    }
+
     /** Plugin shut down: stop every timer the panel owns. */
     void dispose()
     {
@@ -313,6 +319,7 @@ class ForgeBingoPanel extends PluginPanel
         add(content, nextUp);
         // no leaderboard or notices list here (owner, 2026-11-10): drops are announced in chat instead
 
+        imps.setItemImages(plugin::itemImage);
         // the imps are painted over the column by a layer, in the column's own coordinates (they scroll with it)
         JScrollPane scroll = new JScrollPane(new javax.swing.JLayer<JComponent>(content, imps),
             JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);

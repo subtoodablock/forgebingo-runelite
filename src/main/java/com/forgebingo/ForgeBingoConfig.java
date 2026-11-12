@@ -203,6 +203,14 @@ public interface ForgeBingoConfig extends Config
         return true;
     }
 
+    @ConfigItem(keyName = "panelRain", name = "Side panel item rain",
+        description = "Now and then a famous drop falls down the side panel. Catch one with your mouse and let it go.",
+        position = 6)
+    default boolean panelRain()
+    {
+        return true;
+    }
+
     @ConfigSection(name = "Board overlay", description = "The bingo board drawn over the game", position = 7)
     String boardOverlay = "boardOverlay";
 

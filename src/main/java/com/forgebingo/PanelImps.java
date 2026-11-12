@@ -2,9 +2,17 @@ package com.forgebingo;
 
 import com.forgebingo.core.ImpSprite;
 import java.awt.AWTEvent;
+import java.awt.AlphaComposite;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Composite;
 import java.awt.Container;
+import java.awt.Cursor;
+import java.awt.event.MouseAdapter;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.function.IntFunction;
+import net.runelite.api.gameval.ItemID;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Point;
@@ -61,7 +69,100 @@ final class PanelImps extends LayerUI<JComponent>
         Rectangle last;
     }
 
+    /** The famous drops that rain down now and then (real item icons, asked of the client by id). */
+    private static final int[] RAIN_ITEMS = {
+        ItemID.TWISTED_BOW, ItemID.SOULREAPER, ItemID.INQUISITORS_MACE, ItemID.INQUISITORS_HELM,
+        ItemID.ZARYTE_XBOW, ItemID.ACB, ItemID.DRAGONHUNTER_XBOW, ItemID.SCYTHE_OF_VITUR,
+        ItemID.TUMEKENS_SHADOW, ItemID.OSMUMTENS_FANG, ItemID.ELDER_MAUL, ItemID.KODAI_WAND,
+        ItemID.MASORI_MASK, ItemID.MASORI_BODY, ItemID.MASORI_CHAPS,
+        ItemID.ANCESTRAL_HAT, ItemID.ANCESTRAL_ROBE_TOP, ItemID.ANCESTRAL_ROBE_BOTTOM,
+        ItemID.TORVA_HELM, ItemID.OATHPLATE_HELM, ItemID.VOIDWAKER, ItemID.DRAGON_WARHAMMER,
+        ItemID.DRAGON_CLAWS, ItemID.ABYSSAL_BLUDGEON, ItemID.NOXIOUS_HALBERD, ItemID.EYE_OF_AYAK,
+        ItemID.SANGUINESTI_STAFF, ItemID.TOXIC_BLOWPIPE,
+    };
+    private static final float RAIN_GRAVITY = 240f;
+    private static final float RAIN_MAX_FALL = 170f;
+    private static final int RAIN_MAX = 7;
+
+    /** One falling item: centre x/y in the column's coordinates. */
+    private static final class Drop
+    {
+        float x, y, vx, vy, rot, vrot, age;
+        BufferedImage img;
+        Rectangle last;
+    }
+
     private final Random rnd = new Random();
+    private final List<Drop> drops = new ArrayList<>();
+    private final Map<Integer, BufferedImage> itemCache = new HashMap<>();
+    private IntFunction<BufferedImage> itemImages;
+    private boolean rain = true;
+    private float nextDrop = 5f;
+    /** the item the mouse is carrying, and where on it the mouse took hold */
+    private Drop held;
+    private float holdDx, holdDy;
+    private long holdNanos;
+    private final MouseAdapter grab = new MouseAdapter()
+    {
+        @Override
+        public void mousePressed(MouseEvent e)
+        {
+            Drop d = dropAt(e.getX(), e.getY());
+            if (d == null)
+            {
+                syncGlass(false);
+                return;
+            }
+            held = d;
+            holdDx = d.x - e.getX();
+            holdDy = d.y - e.getY();
+            holdNanos = System.nanoTime();
+            d.vx = 0;
+            d.vy = 0;
+        }
+
+        @Override
+        public void mouseDragged(MouseEvent e)
+        {
+            Drop d = held;
+            if (d == null) return;
+            long now = System.nanoTime();
+            float dt = Math.max(0.004f, (now - holdNanos) / 1e9f);
+            holdNanos = now;
+            float nx = e.getX() + holdDx;
+            float ny = e.getY() + holdDy;
+            // remember how fast it is being carried, so letting go throws it
+            d.vx += ((nx - d.x) / dt - d.vx) * 0.5f;
+            d.vy += ((ny - d.y) / dt - d.vy) * 0.5f;
+            d.x = nx;
+            d.y = ny;
+        }
+
+        @Override
+        public void mouseReleased(MouseEvent e)
+        {
+            Drop d = held;
+            held = null;
+            if (d != null)
+            {
+                if (System.nanoTime() - holdNanos > 120_000_000L)
+                {
+                    d.vx = 0;
+                    d.vy = 0;
+                }
+                d.vx = Math.max(-420, Math.min(420, d.vx));
+                d.vy = Math.max(-520, Math.min(420, d.vy));
+                d.vrot = d.vx / 90f + rnd(-1.2f, 1.2f);
+            }
+            syncGlass(dropAt(e.getX(), e.getY()) != null);
+        }
+
+        @Override
+        public void mouseExited(MouseEvent e)
+        {
+            if (held == null) syncGlass(false);
+        }
+    };
     private final List<Imp> imps = new ArrayList<>();
     private final List<int[]> plats = new ArrayList<>(); // left, right, y
     private final Timer timer = new Timer(33, e -> frame());
@@ -81,8 +182,13 @@ final class PanelImps extends LayerUI<JComponent>
     {
         super.installUI(c);
         layer = (JLayer<? extends JComponent>) c;
-        layer.setLayerEventMask(AWTEvent.MOUSE_EVENT_MASK);
+        layer.setLayerEventMask(AWTEvent.MOUSE_EVENT_MASK | AWTEvent.MOUSE_MOTION_EVENT_MASK);
         layer.addHierarchyListener(showing);
+        // the layer's glass pane is only shown while the mouse is on a falling item, so catching one never
+        // clicks the button under it and the rest of the panel keeps its clicks
+        layer.getGlassPane().addMouseListener(grab);
+        layer.getGlassPane().addMouseMotionListener(grab);
+        layer.getGlassPane().setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         sync();
     }
 
@@ -94,7 +200,11 @@ final class PanelImps extends LayerUI<JComponent>
         {
             layer.setLayerEventMask(0);
             layer.removeHierarchyListener(showing);
+            layer.getGlassPane().removeMouseListener(grab);
+            layer.getGlassPane().removeMouseMotionListener(grab);
+            layer.getGlassPane().setVisible(false);
         }
+        held = null;
         layer = null;
         super.uninstallUI(c);
     }
@@ -107,17 +217,42 @@ final class PanelImps extends LayerUI<JComponent>
         if (layer != null) layer.repaint();
     }
 
+    /** Where the falling items' icons come from (the client's item sprites); without it nothing rains. */
+    void setItemImages(IntFunction<BufferedImage> source)
+    {
+        itemImages = source;
+    }
+
+    /** Switches the item rain on or off (the "Side panel item rain" setting). */
+    void setRain(boolean on)
+    {
+        rain = on;
+        if (!on) clearDrops();
+        sync();
+        if (layer != null) layer.repaint();
+    }
+
+    private void clearDrops()
+    {
+        drops.clear();
+        held = null;
+        syncGlass(false);
+    }
+
     /** Stops everything for good (plugin shut down). */
     void dispose()
     {
         enabled = false;
+        rain = false;
         timer.stop();
         imps.clear();
+        clearDrops();
+        itemCache.clear();
     }
 
     private void sync()
     {
-        boolean run = enabled && layer != null && layer.isShowing();
+        boolean run = (enabled || rain) && layer != null && layer.isShowing();
         if (run && !timer.isRunning())
         {
             lastNanos = 0;
@@ -426,8 +561,10 @@ final class PanelImps extends LayerUI<JComponent>
     /** One step of the imps' world (the timer calls this; the offline preview calls it directly). */
     void advance(float dt)
     {
-        if (layer == null || !enabled) return;
+        if (layer == null || !(enabled || rain)) return;
         clock += dt;
+        if (rain) stepRain(dt);
+        if (!enabled) return;
         sincePlats += dt;
         if (sincePlats > 1.2f)
         {
@@ -484,12 +621,150 @@ final class PanelImps extends LayerUI<JComponent>
         }
     }
 
+    // ------------------------------------------------------------------ item rain
+
+    private BufferedImage itemImage(int id)
+    {
+        BufferedImage img = itemCache.get(id);
+        if (img == null && itemImages != null)
+        {
+            try
+            {
+                img = itemImages.apply(id);
+            }
+            catch (RuntimeException | AssertionError e)
+            {
+                img = null; // the client is not ready to hand out item sprites yet
+            }
+            if (img != null) itemCache.put(id, img);
+        }
+        return img;
+    }
+
+    private Drop newDrop(float x, float y, float vx, float vy)
+    {
+        BufferedImage img = itemImage(RAIN_ITEMS[rnd.nextInt(RAIN_ITEMS.length)]);
+        if (img == null || drops.size() >= RAIN_MAX) return null;
+        Drop d = new Drop();
+        d.img = img;
+        d.x = x;
+        d.y = y;
+        d.vx = vx;
+        d.vy = vy;
+        d.rot = rnd(-0.5f, 0.5f);
+        d.vrot = rnd(-1.6f, 1.6f);
+        drops.add(d);
+        return d;
+    }
+
+    /** Now and then: one item drifting down, a small shower, or one lobbed across from the side. */
+    private void rainSome()
+    {
+        Rectangle view = layer.getVisibleRect();
+        int vw = width();
+        float r = rnd.nextFloat();
+        if (r < 0.14f)
+        {
+            int n = 3 + rnd.nextInt(3);
+            for (int i = 0; i < n; i++) newDrop(rnd(22, Math.max(30, vw - 22)), view.y - rnd(24, 190), rnd(-12, 12), rnd(20, 70));
+        }
+        else if (r < 0.36f)
+        {
+            boolean fromLeft = rnd.nextBoolean();
+            float y = view.y + rnd(0.15f, 0.6f) * view.height;
+            Drop d = newDrop(fromLeft ? -22 : vw + 22, y, (fromLeft ? 1 : -1) * rnd(110, 190), -rnd(120, 230));
+            if (d != null) d.vrot = (fromLeft ? 1 : -1) * rnd(3, 6);
+        }
+        else
+        {
+            newDrop(rnd(22, Math.max(30, vw - 22)), view.y - rnd(24, 60), rnd(-14, 14), rnd(20, 60));
+        }
+    }
+
+    private void stepRain(float dt)
+    {
+        nextDrop -= dt;
+        if (nextDrop <= 0)
+        {
+            nextDrop = rnd(7, 18);
+            rainSome();
+        }
+        if (drops.isEmpty()) return;
+        Rectangle view = layer.getVisibleRect();
+        int vw = width();
+        for (int i = drops.size() - 1; i >= 0; i--)
+        {
+            Drop d = drops.get(i);
+            d.age += dt;
+            if (d != held)
+            {
+                d.vy = Math.min(d.vy + RAIN_GRAVITY * dt, RAIN_MAX_FALL);
+                d.vx -= d.vx * Math.min(1, dt * 0.5f);
+                d.x += d.vx * dt;
+                d.y += d.vy * dt;
+                d.rot += d.vrot * dt;
+            }
+            Rectangle r = new Rectangle(Math.round(d.x) - 30, Math.round(d.y) - 30, 60, 60);
+            layer.repaint(d.last == null ? r : r.union(d.last));
+            d.last = r;
+            // gone once it has fallen out of the bottom of what you can see, or flown off a side
+            boolean out = d.y > view.y + view.height + 34 || d.x < -40 || d.x > vw + 40 || d.y < view.y - 400;
+            if (out && d != held) drops.remove(i);
+        }
+    }
+
+    private Drop dropAt(float px, float py)
+    {
+        for (int i = drops.size() - 1; i >= 0; i--)
+        {
+            Drop d = drops.get(i);
+            if (Math.abs(px - d.x) <= 17 && Math.abs(py - d.y) <= 16) return d;
+        }
+        return null;
+    }
+
+    private void syncGlass(boolean want)
+    {
+        if (layer == null) return;
+        Component glass = layer.getGlassPane();
+        boolean show = rain && (want || held != null);
+        if (glass.isVisible() != show) glass.setVisible(show);
+    }
+
+    @Override
+    protected void processMouseMotionEvent(MouseEvent e, JLayer<? extends JComponent> l)
+    {
+        if (!rain || held != null || e.getID() != MouseEvent.MOUSE_MOVED) return;
+        if (drops.isEmpty())
+        {
+            syncGlass(false);
+            return;
+        }
+        Point p = SwingUtilities.convertPoint(e.getComponent(), e.getPoint(), l);
+        syncGlass(dropAt(p.x, p.y) != null);
+    }
+
+    private void paintDrop(Graphics2D g, Drop d)
+    {
+        AffineTransform old = g.getTransform();
+        Composite oldC = g.getComposite();
+        float a = Math.min(1f, d.age / 0.35f);
+        if (a < 1f) g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, a));
+        g.translate(d.x, d.y);
+        g.rotate(d.rot);
+        if (d == held) g.scale(1.15, 1.15);
+        g.drawImage(d.img, -d.img.getWidth() / 2, -d.img.getHeight() / 2, null);
+        g.setTransform(old);
+        g.setComposite(oldC);
+    }
+
     // ------------------------------------------------------------------ input (a poke makes an imp jump)
 
     @Override
     protected void processMouseEvent(MouseEvent e, JLayer<? extends JComponent> l)
     {
         if (e.getID() != MouseEvent.MOUSE_PRESSED || imps.isEmpty()) return;
+        if (e.getComponent() == l.getGlassPane()) return; // that press caught a falling item
         Point p = SwingUtilities.convertPoint(e.getComponent(), e.getPoint(), l);
         for (Imp m : imps)
         {
@@ -511,13 +786,20 @@ final class PanelImps extends LayerUI<JComponent>
     public void paint(Graphics g, JComponent c)
     {
         super.paint(g, c);
-        if (!enabled || imps.isEmpty()) return;
+        boolean showImps = enabled && !imps.isEmpty();
+        boolean showRain = rain && !drops.isEmpty();
+        if (!showImps && !showRain) return;
         Graphics2D g2 = (Graphics2D) g.create();
         try
         {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            if (showRain)
+            {
+                g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                for (Drop d : drops) paintDrop(g2, d);
+            }
             g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-            for (Imp m : imps) paintImp(g2, m);
+            if (showImps) for (Imp m : imps) paintImp(g2, m);
         }
         finally
         {

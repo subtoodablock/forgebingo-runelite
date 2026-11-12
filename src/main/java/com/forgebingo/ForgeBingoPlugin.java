@@ -235,6 +235,7 @@ public class ForgeBingoPlugin extends Plugin
             PanelUi.animations = config.panelAnimations();
             panel = new ForgeBingoPanel(this, api);
             panel.setImps(config.panelImps());
+            panel.setRain(config.panelRain());
             BufferedImage icon = ImageUtil.loadImageResource(getClass(), "icon.png");
             navigationButton = NavigationButton.builder()
                 .tooltip("ForgeBingo")
@@ -489,6 +490,12 @@ public class ForgeBingoPlugin extends Plugin
      * A tile's uploaded icon (/v1/icons/tiles/...), fetched once and cached. Returns null while it loads (the panel
      * is told to redraw when it arrives) or when there is none (see {@link #tileImageMissing}). Any thread.
      */
+    /** An item's inventory icon from the client (it fills in by itself once loaded). */
+    BufferedImage itemImage(int itemId)
+    {
+        return itemManager == null ? null : itemManager.getImage(itemId);
+    }
+
     BufferedImage tileImage(String proxyPath)
     {
         if (proxyPath == null || !com.forgebingo.core.IconRef.isProxyPath(proxyPath)) return null;
@@ -620,14 +627,16 @@ public class ForgeBingoPlugin extends Plugin
             else ForgeBingoPanel.usePixelFonts(pixel);
             return;
         }
-        if ("panelAnimations".equals(e.getKey()) || "panelImps".equals(e.getKey()))
+        if ("panelAnimations".equals(e.getKey()) || "panelImps".equals(e.getKey()) || "panelRain".equals(e.getKey()))
         {
             boolean animate = config.panelAnimations();
             boolean imps = config.panelImps();
+            boolean rain = config.panelRain();
             ForgeBingoPanel p = panel;
             if (p != null) javax.swing.SwingUtilities.invokeLater(() -> {
                 p.setAnimations(animate);
                 p.setImps(imps);
+                p.setRain(rain);
             });
             return;
         }
