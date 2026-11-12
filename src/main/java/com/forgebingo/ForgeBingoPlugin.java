@@ -180,6 +180,8 @@ public class ForgeBingoPlugin extends Plugin
     private volatile boolean helloPending = true;
     private volatile long helloNotBefore;
     private volatile String lastIdentityNotice;
+    /** bingos the last hello reported (null until the first one), to spot a team the player was just put on */
+    private volatile java.util.Set<String> helloEvents;
 
     private static final class Screenshot
     {
@@ -403,6 +405,17 @@ public class ForgeBingoPlugin extends Plugin
         {
             List<ConnectionStatus.Line> lines = ConnectionStatus.fromHello(r.body);
             notifyPanel(p -> p.setIdentity(lines));
+            // Logging in can put the player on a team (the organizer listed their RSN): fetch the boards straight
+            // away when the server reports a bingo we did not know about, so the new board shows without a wait.
+            java.util.Set<String> now = new java.util.HashSet<>();
+            if (r.body.memberships != null) for (ApiModels.Membership m : r.body.memberships) if (m != null && m.eventId != null) now.add(m.eventId);
+            boolean newBingo = helloEvents != null && !helloEvents.containsAll(now);
+            helloEvents = now;
+            if (newBingo)
+            {
+                notice("You were added to a new bingo board.", false);
+                pollBoardSafely();
+            }
             for (ConnectionStatus.Line l : lines)
             {
                 if (l.level == ConnectionStatus.Level.ERROR && !l.text.equals(lastIdentityNotice))
