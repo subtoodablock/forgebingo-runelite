@@ -184,20 +184,23 @@ public class ForgeBingoPlugin extends Plugin
     /** bingos the last hello reported (null until the first one), to spot a team the player was just put on */
     private volatile java.util.Set<String> helloEvents;
 
+    /**
+     * A drop screenshot waiting for the server's answer. Kept unstamped: one drop can count for several teams in
+     * different bingos, and each team's copy is stamped with that team's own code and tile names when it is sent.
+     */
     private static final class Screenshot
     {
-        final byte[] png;
+        final byte[] raw;
         final long at;
-        /** what was stamped on it (the review screen checks these against the event) */
-        final String keyword;
-        final String capturedAt;
+        final String player;
+        final java.time.ZonedDateTime taken;
 
-        Screenshot(byte[] png, long at, String keyword, String capturedAt)
+        Screenshot(byte[] raw, long at, String player, java.time.ZonedDateTime taken)
         {
-            this.png = png;
+            this.raw = raw;
             this.at = at;
-            this.keyword = keyword;
-            this.capturedAt = capturedAt;
+            this.player = player;
+            this.taken = taken;
         }
     }
 
@@ -1345,12 +1348,25 @@ public class ForgeBingoPlugin extends Plugin
         if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen()) return;
         // marked before the frame arrives: the server's answer can come back first, and the upload waits for this
         shotsInProgress.add(eventId);
+        // Wait ~2 game ticks before taking it (owner, 2026-11-12): by then the drop's chat message, the loot on the
+        // ground and the collection log pop-up are all on screen, so the proof shows the drop clearly.
+        executor.schedule(() -> requestDropFrame(eventId), SCREENSHOT_DELAY_MS, TimeUnit.MILLISECONDS);
+    }
+
+    /** milliseconds between spotting a drop and taking its screenshot */
+    private static final long SCREENSHOT_DELAY_MS = 1200;
+
+    private void requestDropFrame(String eventId)
+    {
+        if (!running) { shotsInProgress.remove(eventId); return; }
         drawManager.requestNextFrameListener(image -> {
             if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen())
             {
                 shotsInProgress.remove(eventId);
                 return;
             }
+            // the player's name, read on the client thread as the frame is captured
+            String player = client.getLocalPlayer() == null ? null : client.getLocalPlayer().getName();
             executor.execute(() -> {
             try
             {
@@ -1359,10 +1375,8 @@ public class ForgeBingoPlugin extends Plugin
                 {
                     img = withWindow(img);
                 }
-                ApiModels.BoardResponse cb = currentBoard();
-                String kw = cb != null && cb.event != null ? cb.event.keyword : null;
                 java.time.ZonedDateTime taken = java.time.ZonedDateTime.now();
-                img = ScreenshotStamp.stamp(img, kw, taken);
+                // stored unstamped; each team's copy is stamped with its own code and tiles when it is sent
                 byte[] shot = ScreenshotEncode.jpeg(img, ApiClient.MAX_SCREENSHOT_BYTES);
                 if (shot == null) return;
                 long now = System.currentTimeMillis();
@@ -1376,7 +1390,7 @@ public class ForgeBingoPlugin extends Plugin
                     if (oldest == null) break;
                     screenshots.remove(oldest);
                 }
-                screenshots.put(eventId, new Screenshot(shot, now, kw, taken.withZoneSameInstant(java.time.ZoneOffset.UTC).toInstant().toString()));
+                screenshots.put(eventId, new Screenshot(shot, now, player, taken));
             }
             catch (Exception ex)
             {
@@ -1399,7 +1413,16 @@ public class ForgeBingoPlugin extends Plugin
      */
     void sendScreenshotProof(String taskId, String what)
     {
-        String team = config.activeBoardId();
+        sendScreenshotProof(null, taskId, what, null);
+    }
+
+    /**
+     * As above, for the board the tile card came from (null = the selected board); tileName is stamped on the shot
+     * with the player's name, that bingo's code and the time.
+     */
+    void sendScreenshotProof(String teamBoardId, String taskId, String what, String tileName)
+    {
+        String team = teamBoardId != null && !teamBoardId.isEmpty() ? teamBoardId : config.activeBoardId();
         ApiClient a = api;
         if (taskId == null || team == null || team.isEmpty() || a == null || !a.configured())
         {
@@ -1411,7 +1434,10 @@ public class ForgeBingoPlugin extends Plugin
             notice("Log in (and close the bank PIN) to take a screenshot.", true);
             return;
         }
-        drawManager.requestNextFrameListener(image -> executor.execute(() -> {
+        drawManager.requestNextFrameListener(image -> {
+            // read the player's name here, on the client thread, as the frame is captured
+            String player = client.getLocalPlayer() == null ? null : client.getLocalPlayer().getName();
+            executor.execute(() -> {
             try
             {
                 BufferedImage img = ImageUtil.bufferedImageFromImage(image);
@@ -1419,7 +1445,7 @@ public class ForgeBingoPlugin extends Plugin
                 ApiModels.BoardResponse cb = currentBoard();
                 String kw = cb != null && cb.event != null ? cb.event.keyword : null;
                 java.time.ZonedDateTime taken = java.time.ZonedDateTime.now();
-                img = ScreenshotStamp.stamp(img, kw, taken);
+                img = ScreenshotStamp.stamp(img, kw, taken, player, tileName == null ? what : tileName);
                 byte[] shot = ScreenshotEncode.jpeg(img, ApiClient.MAX_SCREENSHOT_BYTES);
                 if (shot == null) return;
                 ApiResult<ApiModels.ProofResponse> r = a.uploadTaskScreenshot(team, taskId, shot, kw,
@@ -1430,7 +1456,14 @@ public class ForgeBingoPlugin extends Plugin
                     boardVersions.clear();
                     pollBoardSafely();
                 }
-                else if (r.status == 404 || "invalid_targets".equals(r.errorCode))
+                else if (r.status == 404)
+                {
+                    // the selected board is gone (team deleted, or the bingo is not live yet): reload the list
+                    notice("That board isn't available any more. Pick your board again in the ForgeBingo panel.", true);
+                    boardVersions.clear();
+                    pollBoardSafely();
+                }
+                else if ("invalid_targets".equals(r.errorCode))
                 {
                     notice("The server doesn't take plugin screenshots yet - add proof on the website for now.", true);
                 }
@@ -1448,7 +1481,8 @@ public class ForgeBingoPlugin extends Plugin
                 log.debug("screenshot proof failed", ex);
                 notice("Screenshot not sent: something went wrong taking it.", true);
             }
-        }));
+            });
+        });
     }
 
     /** The bank PIN keypad (interface group 213) is showing. */
@@ -1554,12 +1588,43 @@ public class ForgeBingoPlugin extends Plugin
             if (name == null || name.isEmpty()) name = m.tileId == null ? null : tileTitles.get(m.tileId);
             if (name != null && !name.isEmpty()) labels.putIfAbsent(m.teamId, name);
         }
+        // tiles this drop counted for, per team (a player can be on several teams in different bingos at once)
+        Map<String, List<String>> tilesByTeam = new java.util.HashMap<>();
+        for (ApiModels.Match m : result.matched)
+        {
+            if (m.teamId != null && m.tileId != null) tilesByTeam.computeIfAbsent(m.teamId, k -> new ArrayList<>()).add(m.tileId);
+        }
+        String capturedAt = s.taken.withZoneSameInstant(java.time.ZoneOffset.UTC).toInstant().toString();
         for (Map.Entry<String, List<String>> t : byTeam.entrySet())
         {
-            ApiResult<ApiModels.ProofResponse> r = api.uploadProof(t.getKey(), s.png, t.getValue(), s.keyword, s.capturedAt, labels.get(t.getKey()));
-            if (!r.ok())
+            try
             {
-                notice("Screenshot upload failed: " + r.describe(), true);
+                // that team's own board: its bingo's code word and the names of the tiles the drop counted for
+                ApiResult<ApiModels.BoardResponse> br = api.board(t.getKey());
+                ApiModels.BoardResponse tb = br.ok() ? br.body : null;
+                String kw = tb != null && tb.event != null ? tb.event.keyword : null;
+                List<String> names = new ArrayList<>();
+                for (String tileId : tilesByTeam.getOrDefault(t.getKey(), java.util.Collections.emptyList()))
+                {
+                    String title = null;
+                    if (tb != null && tb.tiles != null) for (ApiModels.Tile x : tb.tiles) if (x != null && tileId.equals(x.id)) { title = TileInfo.shownTitle(x); break; }
+                    if (title == null) title = tileTitles.get(tileId);
+                    if (title != null && !title.isEmpty() && !names.contains(title)) names.add(title);
+                }
+                String tiles = names.isEmpty() ? null : names.size() <= 2 ? String.join(", ", names) : names.get(0) + ", " + names.get(1) + " +" + (names.size() - 2);
+                BufferedImage img = ImageIO.read(new java.io.ByteArrayInputStream(s.raw));
+                if (img == null) continue;
+                byte[] stamped = ScreenshotEncode.jpeg(ScreenshotStamp.stamp(img, kw, s.taken, s.player, tiles), ApiClient.MAX_SCREENSHOT_BYTES);
+                if (stamped == null) continue;
+                ApiResult<ApiModels.ProofResponse> r = api.uploadProof(t.getKey(), stamped, t.getValue(), kw, capturedAt, labels.get(t.getKey()));
+                if (!r.ok())
+                {
+                    notice("Screenshot upload failed: " + r.describe(), true);
+                }
+            }
+            catch (java.io.IOException ex)
+            {
+                log.debug("screenshot stamp failed", ex);
             }
         }
     }

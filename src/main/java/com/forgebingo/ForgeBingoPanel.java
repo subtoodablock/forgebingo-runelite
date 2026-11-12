@@ -859,7 +859,10 @@ class ForgeBingoPanel extends PluginPanel
                 // RuneLite sends its own proof: a game screenshot straight to this task, waiting for review
                 JButton shot = button("Send screenshot", "Takes a screenshot of the game now and sends it as proof for this task");
                 String what = k.description == null || k.description.isEmpty() ? TileInfo.shownTitle(t) : k.description;
-                shot.addActionListener(e -> plugin.sendScreenshotProof(k.id, what));
+                // sent to the board this card is from (not whatever is selected when it's clicked), stamped with its tile
+                String boardId = lastBoard == null ? null : lastBoard.teamBoardId;
+                String tileName = TileInfo.shownTitle(t);
+                shot.addActionListener(e -> plugin.sendScreenshotProof(boardId, k.id, what, tileName));
                 box.add(gap(4));
                 box.add(fullWidth(shot, 22));
             }

@@ -33,6 +33,23 @@ public class ScreenshotStampTest
         assertEquals(Color.WHITE.getRGB(), src.getRGB(2, 2));
     }
 
+    /** Tile, player, code and time make a taller box than the time alone (four lines instead of one). */
+    @Test
+    public void proofStampHasTilePlayerCodeAndTime()
+    {
+        BufferedImage full = ScreenshotStamp.stamp(white(765, 503), "Zulrah42", T, "Goonferno", "Big bones x10");
+        BufferedImage bare = ScreenshotStamp.stamp(white(765, 503), null, T, null, null);
+        int fullBox = boxHeight(full), bareBox = boxHeight(bare);
+        assertTrue("4-line box " + fullBox + " vs 1-line " + bareBox, fullBox > bareBox * 3);
+    }
+
+    private static int boxHeight(BufferedImage img)
+    {
+        int y = 0;
+        while (y < img.getHeight() && (img.getRGB(1, y) & 0xffffff) != (Color.WHITE.getRGB() & 0xffffff)) y++;
+        return y;
+    }
+
     @Test
     public void stampsTimeWithoutKeyword()
     {

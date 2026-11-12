@@ -28,6 +28,30 @@ public final class ScreenshotStamp
     /** Returns a new image (same size) with the stamp drawn; the source is not modified. */
     public static BufferedImage stamp(BufferedImage src, String keyword, ZonedDateTime when)
     {
+        return stamp(src, keyword, when, null, null);
+    }
+
+    /**
+     * Proof stamp (owner, 2026-11-12): the tile it is for, the player, "Code: keyword" and the date/time, top-left.
+     * Any of tile / player / keyword may be null or blank and is then left out.
+     */
+    public static BufferedImage stamp(BufferedImage src, String keyword, ZonedDateTime when, String player, String tile)
+    {
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        if (tile != null && !tile.trim().isEmpty()) lines.add(clip(tile.trim(), 48));
+        if (player != null && !player.trim().isEmpty()) lines.add(clip(player.trim(), 24));
+        if (keyword != null && !keyword.trim().isEmpty()) lines.add("Code: " + clip(keyword.trim(), 40));
+        lines.add(timeText(when));
+        return draw(src, lines.toArray(new String[0]));
+    }
+
+    private static String clip(String s, int max)
+    {
+        return s.length() <= max ? s : s.substring(0, max - 1) + "…";
+    }
+
+    private static BufferedImage draw(BufferedImage src, String[] lines)
+    {
         BufferedImage out = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_INT_RGB);
         Graphics2D g = out.createGraphics();
         try
@@ -37,8 +61,6 @@ public final class ScreenshotStamp
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, size));
             FontMetrics fm = g.getFontMetrics();
-            String kw = keyword == null ? "" : keyword.trim();
-            String[] lines = kw.isEmpty() ? new String[] {timeText(when)} : new String[] {kw, timeText(when)};
             int pad = Math.max(4, size / 3);
             int w = 0;
             for (String l : lines) w = Math.max(w, fm.stringWidth(l));
