@@ -448,7 +448,6 @@ public class BoardOverlay extends Overlay
             }
             g.setComposite(base);
             if (rarity == OpeningAnim.Rarity.LEGENDARY) drawBurst(g, b, sinceOpen, boardAlpha);
-            drawRarityTag(g, b, spec, sinceOpen, boardAlpha);
             g.setComposite(base);
             if (sinceOpen > DEAL_MS) cascade = false;
         }
@@ -574,41 +573,6 @@ public class BoardOverlay extends Overlay
                 gc.setColor(k % 4 == 0 ? new Color(255, 255, 255, a) : new Color(255, 184, 63, a));
                 gc.fill(new java.awt.geom.Ellipse2D.Double(cx + Math.cos(ang) * d - s / 2.0, cy + Math.sin(ang) * d - s / 2.0, s, s));
             }
-        }
-        finally
-        {
-            gc.dispose();
-        }
-    }
-
-    /** "LEGENDARY · Spiral Vortex" over the board for most of the animation, in the rarity colour. */
-    private static void drawRarityTag(Graphics2D g, Rectangle b, OpeningAnim.Spec spec, long since, float alpha)
-    {
-        double life = Math.min(1, since / 250.0) * Math.min(1, Math.max(0, (DEAL_MS - since) / 500.0));
-        if (life <= 0) return;
-        String s = spec.rarity.label.toUpperCase() + "  ·  " + spec.name;
-        Font f = spec.rarity == OpeningAnim.Rarity.COMMON ? FontManager.getRunescapeSmallFont() : FontManager.getRunescapeBoldFont();
-        Graphics2D gc = (Graphics2D) g.create();
-        try
-        {
-            gc.setFont(f);
-            FontMetrics fm = gc.getFontMetrics();
-            int w = fm.stringWidth(s) + 16, h = fm.getHeight() + 6, x = (int) b.getCenterX() - w / 2, y = Math.max(2, b.y - h - 6);
-            gc.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (life * alpha)));
-            gc.setColor(new Color(0, 0, 0, 190));
-            gc.fillRoundRect(x, y, w, h, 8, 8);
-            Color c = spec.rarity.colour;
-            if (spec.rarity == OpeningAnim.Rarity.LEGENDARY || spec.rarity == OpeningAnim.Rarity.EPIC)
-            {
-                // a shimmer that sweeps across the tag
-                double sweep = (since % 900) / 900.0;
-                gc.setPaint(new GradientPaint((float) (x + w * sweep - 30), y, new Color(c.getRed(), c.getGreen(), c.getBlue(), 0),
-                    (float) (x + w * sweep), y, new Color(c.getRed(), c.getGreen(), c.getBlue(), 110), true));
-                gc.fillRoundRect(x, y, w, h, 8, 8);
-            }
-            gc.setColor(c);
-            gc.drawRoundRect(x, y, w - 1, h - 1, 8, 8);
-            text(gc, f, s, c, x + w / 2, y + h / 2 + fm.getAscent() / 2 - 2, true);
         }
         finally
         {
