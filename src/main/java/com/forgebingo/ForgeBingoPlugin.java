@@ -1020,12 +1020,72 @@ public class ForgeBingoPlugin extends Plugin
         submit(ev, true);
     }
 
+    /** "Name found something special: Item" (Theatre of Blood, Tombs of Amascut and raids worded the same way) */
+    private static final java.util.regex.Pattern FOUND_SPECIAL = java.util.regex.Pattern.compile("^(.{1,12}?) found something special: (.+)$");
+    /** Chambers of Xeric: a "Special loot:" line, then "Name - Item" on the next */
+    private static final java.util.regex.Pattern SPECIAL_LINE = java.util.regex.Pattern.compile("^(.{1,12}?) - (.+)$");
+    private static final long RAID_SHOT_TTL_MILLIS = 15 * 60_000L;
+    private volatile int specialLootTick = -100;
+    /** the frame taken when a raid's chat named us for special loot; goes in front of that chest's two shots */
+    private volatile byte[] raidShot;
+    private volatile java.time.ZonedDateTime raidShotTaken;
+    private volatile long raidShotAt;
+
+    /**
+     * The purple moment (owner, 2026-11-12): when a raid's chat line says we found something special, keep a
+     * screenshot of it. It is only ever sent together with that raid's chest loot, as the first of its proof shots.
+     */
+    private void watchSpecialLoot(String raw, int tick)
+    {
+        if (raw == null || !config.screenshotOnMatch()) return;
+        String msg = net.runelite.client.util.Text.removeTags(raw).replace(' ', ' ').trim();
+        if (msg.equalsIgnoreCase("Special loot:"))
+        {
+            specialLootTick = tick;
+            return;
+        }
+        java.util.regex.Matcher m = FOUND_SPECIAL.matcher(msg);
+        if (!m.find())
+        {
+            if (tick - specialLootTick > 2) return;
+            m = SPECIAL_LINE.matcher(msg);
+            if (!m.find()) return;
+        }
+        Player me = client.getLocalPlayer();
+        String mine = me == null ? null : Sanitizer.normalizeRsn(me.getName());
+        if (mine == null || !mine.equalsIgnoreCase(Sanitizer.normalizeRsn(m.group(1)))) return;
+        // a moment later, so the chat line (and the purple light where the raid shows one) is drawn
+        executor.schedule(() -> {
+            if (!running) return;
+            drawManager.requestNextFrameListener(image -> {
+                if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen()) return;
+                executor.execute(() -> {
+                    try
+                    {
+                        BufferedImage img = ImageUtil.bufferedImageFromImage(image);
+                        if (config.screenshotSidebar()) img = withWindow(img);
+                        byte[] shot = ScreenshotEncode.jpeg(img, ApiClient.MAX_SCREENSHOT_BYTES);
+                        if (shot == null) return;
+                        raidShotTaken = java.time.ZonedDateTime.now();
+                        raidShotAt = System.currentTimeMillis();
+                        raidShot = shot;
+                    }
+                    catch (Exception ex)
+                    {
+                        log.debug("special loot screenshot failed", ex);
+                    }
+                });
+            });
+        }, 600, TimeUnit.MILLISECONDS);
+    }
+
     @Subscribe
     public void onChatMessage(ChatMessage e)
     {
         String type = e.getType() == null ? "" : e.getType().name();
         String msg = e.getMessage();
         int tick = client.getTickCount();
+        watchSpecialLoot(msg, tick);
         if (type.equals("CLAN_MESSAGE") || type.equals("CLAN_GIM_MESSAGE") || type.equals("FRIENDSCHATNOTIFICATION"))
         {
             // Clan pet broadcasts are the only line that names a duplicate pet. Only our own.
@@ -1359,7 +1419,7 @@ public class ForgeBingoPlugin extends Plugin
         log.debug("queue event {} {}", ev.sourceType, ev.label());
         if (maybeScreenshot && config.screenshotOnMatch() && couldCount(ev))
         {
-            captureScreenshot(ev.id, chestWindow ? CHEST_SHOT_DELAYS_MS : DROP_SHOT_DELAYS_MS);
+            captureScreenshot(ev.id, chestWindow ? CHEST_SHOT_DELAYS_MS : DROP_SHOT_DELAYS_MS, chestWindow);
         }
         List<QueuedEvent> evicted = queue.add(new QueuedEvent(ev, System.currentTimeMillis()));
         for (QueuedEvent q : evicted) notice("Queue full, dropped oldest event: " + q.event.label(), true);
@@ -1424,7 +1484,7 @@ public class ForgeBingoPlugin extends Plugin
         return false;
     }
 
-    private void captureScreenshot(String eventId, long[] delays)
+    private void captureScreenshot(String eventId, long[] delays, boolean chest)
     {
         // only in game, and never with the bank PIN keypad on screen (its layout would be in the proof)
         if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen()) return;
@@ -1439,10 +1499,22 @@ public class ForgeBingoPlugin extends Plugin
             if (oldest == null) break;
             screenshots.remove(oldest);
         }
-        screenshots.put(eventId, new Screenshot(delays.length, now));
+        // a raid chest opened soon after the chat named us for special loot: that moment goes first
+        byte[] before = chest ? raidShot : null;
+        java.time.ZonedDateTime beforeTaken = raidShotTaken;
+        boolean lead = before != null && beforeTaken != null && now - raidShotAt < RAID_SHOT_TTL_MILLIS;
+        if (chest) raidShot = null;
+        int off = lead ? 1 : 0;
+        Screenshot holder = new Screenshot(delays.length + off, now);
+        if (lead)
+        {
+            holder.raw[0] = before;
+            holder.taken[0] = beforeTaken;
+        }
+        screenshots.put(eventId, holder);
         for (int i = 0; i < delays.length; i++)
         {
-            int index = i;
+            int index = i + off;
             // marked before the frame arrives: the server's answer can come back first, and the upload waits for this
             shotsInProgress.add(eventId + "#" + index);
             executor.schedule(() -> requestDropFrame(eventId, index), delays[i], TimeUnit.MILLISECONDS);
