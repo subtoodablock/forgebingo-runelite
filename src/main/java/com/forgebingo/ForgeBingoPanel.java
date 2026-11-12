@@ -189,6 +189,9 @@ class ForgeBingoPanel extends PluginPanel
         identity.add(message("Log in to the game so we can check which character you're playing.", ConnectionStatus.Level.INFO));
         add(content, identityGap);
         add(content, identity);
+        // bingos whose board hasn't opened yet (shared reveal): a countdown to their start
+        upcoming.setVisible(false);
+        add(content, upcoming);
         setHeaderCollapsed(plugin.panelHeaderCollapsed());
         teamNews.setVisible(false);
         add(content, teamNews);
@@ -315,6 +318,61 @@ class ForgeBingoPanel extends PluginPanel
         }
         identity.revalidate();
         identity.repaint();
+    }
+
+    // ---- shared reveal countdown
+    private final JPanel upcoming = column();
+    private java.util.List<ApiModels.Membership> upcomingList = new java.util.ArrayList<>();
+    private final javax.swing.Timer upcomingTick = new javax.swing.Timer(1000, e -> renderUpcoming());
+
+    /** Bingos the player is on whose board hasn't opened yet; shown with a live countdown to the start. */
+    void setUpcoming(List<ApiModels.Membership> list)
+    {
+        upcomingList = list == null ? new java.util.ArrayList<>() : new java.util.ArrayList<>(list);
+        renderUpcoming();
+        if (upcomingList.isEmpty()) upcomingTick.stop();
+        else if (!upcomingTick.isRunning()) upcomingTick.start();
+    }
+
+    /** That bingo's board just opened: drop its countdown. */
+    void removeUpcoming(String eventId)
+    {
+        if (eventId == null) return;
+        upcomingList.removeIf(m -> eventId.equals(m.eventId));
+        setUpcoming(upcomingList);
+    }
+
+    private void renderUpcoming()
+    {
+        upcoming.removeAll();
+        for (ApiModels.Membership m : upcomingList)
+        {
+            String name = (m.eventName == null ? "Your bingo" : m.eventName) + (m.teamName == null ? "" : " - " + m.teamName);
+            upcoming.add(gap(4));
+            upcoming.add(message(name + ": " + countdown(m.startsAt), ConnectionStatus.Level.INFO));
+        }
+        upcoming.setVisible(!upcomingList.isEmpty());
+        upcoming.revalidate();
+        upcoming.repaint();
+    }
+
+    /** "board opens in 2h 13m 05s" (or "when the bingo goes live" when there's no start time yet). */
+    static String countdown(String startsAt)
+    {
+        long start;
+        try
+        {
+            start = startsAt == null ? -1 : java.time.OffsetDateTime.parse(startsAt).toInstant().toEpochMilli();
+        }
+        catch (RuntimeException ex)
+        {
+            start = -1;
+        }
+        if (start < 0) return "board opens when the bingo goes live";
+        long s = (start - System.currentTimeMillis()) / 1000;
+        if (s <= 0) return "board opening...";
+        long d = s / 86400, h = (s % 86400) / 3600, mi = (s % 3600) / 60, se = s % 60;
+        return "board opens in " + (d > 0 ? d + "d " + h + "h " + mi + "m" : h > 0 ? h + "h " + String.format("%02dm %02ds", mi, se) : mi + "m " + String.format("%02ds", se));
     }
 
     void setQueueSize(int size, String lastError)

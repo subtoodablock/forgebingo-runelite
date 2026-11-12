@@ -133,6 +133,16 @@ public class BoardOverlay extends Overlay
         open = true;
     }
 
+    /** The shared reveal when a bingo starts: the board opens by itself with a Legendary animation. Any thread. */
+    void openReveal()
+    {
+        if (open) close();
+        selectedTileId = null;
+        open();
+        opening = OpeningAnim.rollOf(OpeningAnim.Rarity.LEGENDARY, new java.util.Random(openingSeed));
+        openingRanks = null;
+    }
+
     /** this opening's animation, its random seed and the arrival order (built on first draw for the board's size) */
     private volatile OpeningAnim.Spec opening = OpeningAnim.ALL.get(0);
     private volatile long openingSeed;

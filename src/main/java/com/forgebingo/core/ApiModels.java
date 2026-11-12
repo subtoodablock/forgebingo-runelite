@@ -46,6 +46,10 @@ public final class ApiModels
         /** verified | rsn_mismatch | account_mismatch | account_taken | not_approved */
         public String status;
         public boolean verified;
+        /** when the bingo starts (ISO), or null */
+        public String startsAt;
+        /** false while the board is still hidden from this player (shared reveal); null from older servers */
+        public Boolean boardOpen;
     }
 
     public static final class HelloResponse

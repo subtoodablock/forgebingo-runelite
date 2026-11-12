@@ -137,6 +137,14 @@ public final class OpeningAnim
         return of.get(rng.nextInt(of.size()));
     }
 
+    /** Any animation of the given rarity (the shared reveal at a bingo's start always plays a Legendary one). */
+    public static Spec rollOf(Rarity rarity, Random rng)
+    {
+        List<Spec> of = new ArrayList<>();
+        for (Spec s : ALL) if (s.rarity == rarity) of.add(s);
+        return of.get(rng.nextInt(of.size()));
+    }
+
     /**
      * For each cell (row * size + col), its place in the arrival order: 0 arrives first, n-1 last. Ties are fine
      * (those tiles arrive together).

@@ -183,6 +183,8 @@ public class ForgeBingoPlugin extends Plugin
     private volatile String lastIdentityNotice;
     /** bingos the last hello reported (null until the first one), to spot a team the player was just put on */
     private volatile java.util.Set<String> helloEvents;
+    /** boards the last list had (null until the first list), to spot one that just opened (shared reveal) */
+    private volatile java.util.Set<String> knownBoards;
 
     /**
      * A drop screenshot waiting for the server's answer. Kept unstamped: one drop can count for several teams in
@@ -415,6 +417,10 @@ public class ForgeBingoPlugin extends Plugin
             if (r.body.memberships != null) for (ApiModels.Membership m : r.body.memberships) if (m != null && m.eventId != null) now.add(m.eventId);
             boolean newBingo = helloEvents != null && !helloEvents.containsAll(now);
             helloEvents = now;
+            // bingos whose board hasn't opened yet: the side panel counts down to their start
+            List<ApiModels.Membership> waiting = new ArrayList<>();
+            if (r.body.memberships != null) for (ApiModels.Membership m : r.body.memberships) if (m != null && Boolean.FALSE.equals(m.boardOpen)) waiting.add(m);
+            notifyPanel(p -> p.setUpcoming(waiting));
             if (newBingo)
             {
                 notice("You were added to a new bingo board.", false);
@@ -703,6 +709,26 @@ public class ForgeBingoPlugin extends Plugin
         }
         boardFailures = 0;
         List<ApiModels.BoardSummary> boards = list.body.boards;
+        // Shared reveal: a board that appears while we're running has just opened for everyone (the bingo started).
+        // Switch to it, say so in chat and open it over the game with a Legendary animation.
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        for (ApiModels.BoardSummary b : boards) ids.add(b.teamBoardId);
+        java.util.Set<String> before = knownBoards;
+        knownBoards = ids;
+        if (before != null)
+        {
+            for (ApiModels.BoardSummary b : boards)
+            {
+                if (before.contains(b.teamBoardId) || !b.active) continue;
+                notice("The bingo is live! " + (b.eventName == null ? "Your board" : b.eventName) + " is open. Good luck!", true);
+                configManager.setConfiguration(ForgeBingoConfig.GROUP, "activeBoardId", b.teamBoardId);
+                boardVersions.clear();
+                String ev = b.eventId;
+                notifyPanel(p -> p.removeUpcoming(ev));
+                if (config.boardOverlayAnimations()) boardOverlay.openReveal();
+                break;
+            }
+        }
         String wanted = config.activeBoardId();
         ApiModels.BoardSummary selected = null;
         for (ApiModels.BoardSummary b : boards)
