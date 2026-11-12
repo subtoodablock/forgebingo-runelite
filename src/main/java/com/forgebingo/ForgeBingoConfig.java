@@ -152,6 +152,33 @@ public interface ForgeBingoConfig extends Config
 
     Color DEFAULT_CHAT_COLOR = new Color(0x0dc10d);
 
+    enum PanelFont
+    {
+        CLEAN("Clean"),
+        RUNESCAPE("RuneScape");
+
+        private final String label;
+
+        PanelFont(String label)
+        {
+            this.label = label;
+        }
+
+        @Override
+        public String toString()
+        {
+            return label;
+        }
+    }
+
+    @ConfigItem(keyName = "panelFont", name = "Side panel font",
+        description = "Clean: smooth, easy-to-read text. RuneScape: the game's own pixel font.",
+        position = 6)
+    default PanelFont panelFont()
+    {
+        return PanelFont.CLEAN;
+    }
+
     @ConfigSection(name = "Board overlay", description = "The bingo board drawn over the game", position = 7)
     String boardOverlay = "boardOverlay";
 

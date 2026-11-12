@@ -12,6 +12,7 @@ import java.awt.Component;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.Font;
 import java.awt.GridLayout;
 import java.awt.Rectangle;
 import java.awt.event.MouseAdapter;
@@ -67,6 +68,41 @@ class ForgeBingoPanel extends PluginPanel
     private static final Color ERROR = new Color(255, 112, 112);
     private static final Color CLEAR = new Color(0, 0, 0, 0);
 
+    // ---- fonts: "Clean" (smooth sans-serif, the default) or the game's own pixel fonts; chosen in the plugin settings
+    private static final Font CLEAN_SMALL = new Font(Font.SANS_SERIF, Font.PLAIN, 11);
+    private static final Font CLEAN_BODY = new Font(Font.SANS_SERIF, Font.PLAIN, 12);
+    private static final Font CLEAN_BOLD = new Font(Font.SANS_SERIF, Font.BOLD, 13);
+    private static volatile boolean pixelFonts;
+
+    static Font smallFont() { return pixelFonts ? FontManager.getRunescapeSmallFont() : CLEAN_SMALL; }
+    static Font bodyFont() { return pixelFonts ? FontManager.getRunescapeFont() : CLEAN_BODY; }
+    static Font boldFont() { return pixelFonts ? FontManager.getRunescapeBoldFont() : CLEAN_BOLD; }
+
+    /** Switch fonts and restyle everything already on screen (cards built later pick the new fonts up anyway). */
+    void setPixelFonts(boolean pixel)
+    {
+        if (pixel == pixelFonts) return;
+        Font[] from = pixelFonts ? new Font[] {FontManager.getRunescapeSmallFont(), FontManager.getRunescapeFont(), FontManager.getRunescapeBoldFont()}
+            : new Font[] {CLEAN_SMALL, CLEAN_BODY, CLEAN_BOLD};
+        pixelFonts = pixel;
+        Font[] to = {smallFont(), bodyFont(), boldFont()};
+        restyle(this, from, to);
+        revalidate();
+        repaint();
+    }
+
+    static void usePixelFonts(boolean pixel)
+    {
+        pixelFonts = pixel;
+    }
+
+    private static void restyle(Component c, Font[] from, Font[] to)
+    {
+        Font f = c.getFont();
+        for (int i = 0; i < from.length; i++) if (from[i].equals(f)) { c.setFont(to[i]); break; }
+        if (c instanceof java.awt.Container) for (Component k : ((java.awt.Container) c).getComponents()) restyle(k, from, to);
+    }
+
     /** square size for the current board (shrinks for big boards) */
     private int cell = ICON + 6;
 
@@ -121,10 +157,10 @@ class ForgeBingoPanel extends PluginPanel
         JPanel titleRow = new JPanel(new BorderLayout(6, 0));
         titleRow.setOpaque(false);
         JLabel title = new JLabel("ForgeBingo");
-        title.setFont(FontManager.getRunescapeBoldFont());
+        title.setFont(boldFont());
         title.setForeground(ColorScheme.BRAND_ORANGE);
         titleRow.add(title, BorderLayout.CENTER);
-        headToggle.setFont(FontManager.getRunescapeSmallFont());
+        headToggle.setFont(smallFont());
         headToggle.setForeground(MUTED);
         titleRow.add(headToggle, BorderLayout.EAST);
         titleRow.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
@@ -140,12 +176,12 @@ class ForgeBingoPanel extends PluginPanel
         });
         head.add(fullWidth(titleRow, -1));
         head.add(Box.createVerticalStrut(2));
-        status.setFont(FontManager.getRunescapeSmallFont());
+        status.setFont(smallFont());
         head.add(left(status));
-        scope.setFont(FontManager.getRunescapeSmallFont());
+        scope.setFont(smallFont());
         scope.setForeground(MUTED);
         head.add(left(scope));
-        queueLabel.setFont(FontManager.getRunescapeSmallFont());
+        queueLabel.setFont(smallFont());
         queueLabel.setForeground(MUTED);
         head.add(left(queueLabel));
         add(content, head);
@@ -181,12 +217,12 @@ class ForgeBingoPanel extends PluginPanel
         });
 
         // --- team + progress card (filled by setBoard)
-        teamLabel.setFont(FontManager.getRunescapeBoldFont());
+        teamLabel.setFont(boldFont());
         teamLabel.setForeground(Color.WHITE);
-        eventLabel.setFont(FontManager.getRunescapeSmallFont());
+        eventLabel.setFont(smallFont());
         eventLabel.setForeground(MUTED);
         tilesBar.setStringPainted(true);
-        tilesBar.setFont(FontManager.getRunescapeSmallFont());
+        tilesBar.setFont(smallFont());
         tilesBar.setForeground(ColorScheme.BRAND_ORANGE);
         tilesBar.setBackground(ColorScheme.DARK_GRAY_COLOR);
         tilesBar.setBorder(BorderFactory.createEmptyBorder());
@@ -471,11 +507,11 @@ class ForgeBingoPanel extends PluginPanel
         JPanel head = new JPanel(new BorderLayout(6, 0));
         head.setOpaque(false);
         JLabel title = new JLabel(wrapHtml(TileInfo.shownTitle(t), CARD_TEXT - 22));
-        title.setFont(FontManager.getRunescapeBoldFont());
+        title.setFont(boldFont());
         title.setForeground(ColorScheme.BRAND_ORANGE);
         head.add(title, BorderLayout.CENTER);
         JLabel close = new JLabel("x");
-        close.setFont(FontManager.getRunescapeBoldFont());
+        close.setFont(boldFont());
         close.setForeground(MUTED);
         close.setVerticalAlignment(SwingConstants.TOP);
         close.setToolTipText("Close this tile");
@@ -513,7 +549,7 @@ class ForgeBingoPanel extends PluginPanel
         if (!secret)
         {
             JLabel pts = new JLabel(BoardOverlay.points(TileInfo.worth(t)));
-            pts.setFont(FontManager.getRunescapeSmallFont());
+            pts.setFont(smallFont());
             pts.setForeground(ColorScheme.BRAND_ORANGE);
             pts.setVerticalAlignment(SwingConstants.TOP);
             stateRow.add(pts, BorderLayout.EAST);
@@ -686,7 +722,7 @@ class ForgeBingoPanel extends PluginPanel
     private static JLabel smallCaps(String text)
     {
         JLabel l = new JLabel(text.toUpperCase());
-        l.setFont(FontManager.getRunescapeSmallFont());
+        l.setFont(smallFont());
         l.setForeground(new Color(0xc8a35a));
         return l;
     }
@@ -736,12 +772,12 @@ class ForgeBingoPanel extends PluginPanel
         }
         top.add(iconBox, BorderLayout.WEST);
         JLabel name = new JLabel(wrapHtml(k.description == null || k.description.isEmpty() ? "Task" : k.description, CARD_TEXT - 80));
-        name.setFont(FontManager.getRunescapeFont());
+        name.setFont(bodyFont());
         name.setForeground(done ? ColorScheme.PROGRESS_COMPLETE_COLOR : Color.WHITE);
         top.add(name, BorderLayout.CENTER);
         int need = Math.max(1, k.requiredQty);
         JLabel count = new JLabel(done ? "Done" : Math.min(need, k.approvedQty) + "/" + need);
-        count.setFont(FontManager.getRunescapeSmallFont());
+        count.setFont(smallFont());
         count.setForeground(done ? ColorScheme.PROGRESS_COMPLETE_COLOR : MUTED);
         count.setVerticalAlignment(SwingConstants.TOP);
         top.add(count, BorderLayout.EAST);
@@ -767,14 +803,14 @@ class ForgeBingoPanel extends PluginPanel
                 JPanel row = new JPanel(new BorderLayout(6, 0));
                 row.setOpaque(false);
                 row.setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 0));
-                row.add(itemIcon(s.itemIds.get(0), 14), BorderLayout.WEST);
+                row.add(itemIcon(s.itemIds.get(0), 20), BorderLayout.WEST);
                 String label = s.itemIds.size() == 1 ? plugin.itemName(s.itemIds.get(0)) : "Any one: " + anyOf(s.itemIds);
                 JLabel n = new JLabel(wrapHtml(label + (s.pending > 0 && !sDone ? " (waiting)" : ""), CARD_TEXT - 70));
-                n.setFont(FontManager.getRunescapeSmallFont());
+                n.setFont(smallFont());
                 n.setForeground(sDone ? ColorScheme.PROGRESS_COMPLETE_COLOR : s.pending > 0 ? ColorScheme.PROGRESS_INPROGRESS_COLOR : TEXT);
                 row.add(n, BorderLayout.CENTER);
                 JLabel x = new JLabel(sDone ? "done" : s.need > 1 ? s.approved + "/" + s.need : "x" + s.need);
-                x.setFont(FontManager.getRunescapeSmallFont());
+                x.setFont(smallFont());
                 x.setForeground(sDone ? ColorScheme.PROGRESS_COMPLETE_COLOR : MUTED);
                 row.add(x, BorderLayout.EAST);
                 box.add(fullWidth(row, -1));
@@ -791,9 +827,9 @@ class ForgeBingoPanel extends PluginPanel
                 JPanel row = new JPanel(new BorderLayout(6, 0));
                 row.setOpaque(false);
                 row.setBorder(BorderFactory.createEmptyBorder(1, 4, 1, 0));
-                row.add(itemIcon(items.get(i), 14), BorderLayout.WEST);
+                row.add(itemIcon(items.get(i), 20), BorderLayout.WEST);
                 JLabel n = new JLabel(wrapHtml(plugin.itemName(items.get(i)), CARD_TEXT - 40));
-                n.setFont(FontManager.getRunescapeSmallFont());
+                n.setFont(smallFont());
                 n.setForeground(TEXT);
                 row.add(n, BorderLayout.CENTER);
                 box.add(fullWidth(row, -1));
@@ -854,14 +890,14 @@ class ForgeBingoPanel extends PluginPanel
             : BorderFactory.createEmptyBorder(5, 8, 5, 8));
         String count = TileInfo.countText(t);
         JLabel countLabel = new JLabel(count);
-        countLabel.setFont(FontManager.getRunescapeSmallFont());
+        countLabel.setFont(smallFont());
         countLabel.setForeground(ColorScheme.BRAND_ORANGE);
         int textW = CARD_TEXT - (count.isEmpty() ? 0 : countLabel.getPreferredSize().width + 6);
         String who = pinned ? workingNames(t) : "";
         JLabel name = new JLabel(who.isEmpty() ? wrapHtml(t.title, Math.max(60, textW))
             : "<html><body style='width:" + Math.max(60, textW) + "px'>" + esc(t.title)
               + "<br><font color='#969696'>" + esc(who) + "</font></body></html>");
-        name.setFont(FontManager.getRunescapeSmallFont());
+        name.setFont(smallFont());
         name.setForeground(TEXT);
         row.add(name, BorderLayout.CENTER);
         if (!count.isEmpty()) row.add(countLabel, BorderLayout.EAST);
@@ -892,7 +928,7 @@ class ForgeBingoPanel extends PluginPanel
             BorderFactory.createMatteBorder(0, 3, 0, 0, edge),
             BorderFactory.createEmptyBorder(5, 7, 5, 7)));
         JLabel l = new JLabel(wrapHtml(text, CARD_TEXT));
-        l.setFont(FontManager.getRunescapeSmallFont());
+        l.setFont(smallFont());
         l.setForeground(fg);
         p.add(l, BorderLayout.CENTER);
         return fullWidth(p, -1);
@@ -911,7 +947,7 @@ class ForgeBingoPanel extends PluginPanel
     private static JComponent section(String text)
     {
         JLabel l = new JLabel(text.toUpperCase());
-        l.setFont(FontManager.getRunescapeSmallFont());
+        l.setFont(smallFont());
         l.setForeground(ColorScheme.BRAND_ORANGE);
         JPanel p = new JPanel(new BorderLayout());
         p.setOpaque(false);
@@ -928,7 +964,7 @@ class ForgeBingoPanel extends PluginPanel
     {
         JButton b = new JButton(text);
         b.setFocusable(false);
-        b.setFont(FontManager.getRunescapeSmallFont());
+        b.setFont(smallFont());
         b.setToolTipText(tip);
         return b;
     }
@@ -936,7 +972,7 @@ class ForgeBingoPanel extends PluginPanel
     private static JLabel muted(String text)
     {
         JLabel l = new JLabel(wrapHtml(text, INNER - 4));
-        l.setFont(FontManager.getRunescapeSmallFont());
+        l.setFont(smallFont());
         l.setForeground(MUTED);
         return l;
     }
@@ -944,7 +980,7 @@ class ForgeBingoPanel extends PluginPanel
     private static JLabel cardText(String text, Color color, int width)
     {
         JLabel l = new JLabel(wrapHtml(text, width));
-        l.setFont(FontManager.getRunescapeSmallFont());
+        l.setFont(smallFont());
         l.setForeground(color);
         l.setVerticalAlignment(SwingConstants.TOP);
         return l;
@@ -991,7 +1027,7 @@ class ForgeBingoPanel extends PluginPanel
         box.setBorder(BorderFactory.createEmptyBorder(3, 0, 0, 0));
         row.add(box, BorderLayout.WEST);
         JLabel l = new JLabel(wrapHtml(text == null ? "" : text, CARD_TEXT - (indent ? 34 : 18)));
-        l.setFont(indent ? FontManager.getRunescapeSmallFont() : FontManager.getRunescapeFont());
+        l.setFont(indent ? smallFont() : bodyFont());
         l.setForeground(color);
         row.add(l, BorderLayout.CENTER);
         return fullWidth(row, -1);
@@ -1013,7 +1049,7 @@ class ForgeBingoPanel extends PluginPanel
         JProgressBar bar = new JProgressBar(0, Math.max(1, max));
         bar.setValue(value);
         bar.setStringPainted(true);
-        bar.setFont(FontManager.getRunescapeSmallFont());
+        bar.setFont(smallFont());
         bar.setString(text);
         bar.setForeground(done ? ColorScheme.PROGRESS_COMPLETE_COLOR : ColorScheme.BRAND_ORANGE);
         bar.setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -1024,7 +1060,7 @@ class ForgeBingoPanel extends PluginPanel
     private static JLabel cardText(String text, Color color)
     {
         JLabel l = new JLabel(wrapHtml(text, CARD_TEXT));
-        l.setFont(FontManager.getRunescapeSmallFont());
+        l.setFont(smallFont());
         l.setForeground(color);
         return l;
     }
@@ -1126,7 +1162,7 @@ class ForgeBingoPanel extends PluginPanel
         {
             label.setText(BoardOverlay.initials(tile.title));
             label.setForeground(new Color(235, 225, 205));
-            label.setFont(cell >= 26 ? FontManager.getRunescapeBoldFont() : FontManager.getRunescapeSmallFont());
+            label.setFont(cell >= 26 ? boldFont() : smallFont());
             return;
         }
         AsyncBufferedImage img = itemManager.getImage(item);
@@ -1235,7 +1271,7 @@ class ForgeBingoPanel extends PluginPanel
                 long t = System.currentTimeMillis() - started;
                 float k = Math.min(1f, Math.max(0f, (t - 250) / 500f));
                 String msg = message;
-                g.setFont(FontManager.getRunescapeBoldFont());
+                g.setFont(boldFont());
                 java.awt.FontMetrics fm = g.getFontMetrics();
                 int x = (getWidth() - fm.stringWidth(msg)) / 2;
                 int y = getHeight() - 8 + Math.round((1 - k) * 6);

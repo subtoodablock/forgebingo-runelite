@@ -96,7 +96,7 @@ import okhttp3.OkHttpClient;
 @Slf4j
 public class ForgeBingoPlugin extends Plugin
 {
-    static final String VERSION = "1.0.0";
+    static final String VERSION = "2.0.0";
     private static final long BOARD_POLL_SECONDS = 8;
     /** spot animation id of the level-up fireworks (the one the game plays at 99) */
     private static final int LEVEL_UP_FIREWORKS = 199;
@@ -223,6 +223,7 @@ public class ForgeBingoPlugin extends Plugin
             {
                 return;
             }
+            ForgeBingoPanel.usePixelFonts(config.panelFont() == ForgeBingoConfig.PanelFont.RUNESCAPE);
             panel = new ForgeBingoPanel(this, api);
             BufferedImage icon = ImageUtil.loadImageResource(getClass(), "icon.png");
             navigationButton = NavigationButton.builder()
@@ -559,6 +560,14 @@ public class ForgeBingoPlugin extends Plugin
     {
         if (!ForgeBingoConfig.GROUP.equals(e.getGroup()))
         {
+            return;
+        }
+        if ("panelFont".equals(e.getKey()))
+        {
+            boolean pixel = config.panelFont() == ForgeBingoConfig.PanelFont.RUNESCAPE;
+            ForgeBingoPanel p = panel;
+            if (p != null) javax.swing.SwingUtilities.invokeLater(() -> p.setPixelFonts(pixel));
+            else ForgeBingoPanel.usePixelFonts(pixel);
             return;
         }
         if ("apiBaseUrl".equals(e.getKey())) askedHost = null; // ask again for a newly typed address
