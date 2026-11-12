@@ -232,7 +232,9 @@ public class ForgeBingoPlugin extends Plugin
                 return;
             }
             ForgeBingoPanel.usePixelFonts(config.panelFont() == ForgeBingoConfig.PanelFont.RUNESCAPE);
+            PanelUi.animations = config.panelAnimations();
             panel = new ForgeBingoPanel(this, api);
+            panel.setImps(config.panelImps());
             BufferedImage icon = ImageUtil.loadImageResource(getClass(), "icon.png");
             navigationButton = NavigationButton.builder()
                 .tooltip("ForgeBingo")
@@ -270,6 +272,8 @@ public class ForgeBingoPlugin extends Plugin
         currentBoard = null;
         if (navigationButton != null) clientToolbar.removeNavigation(navigationButton);
         navigationButton = null;
+        ForgeBingoPanel closing = panel;
+        if (closing != null) SwingUtilities.invokeLater(closing::dispose);
         panel = null;
         screenshots.clear();
         levels.clear();
@@ -614,6 +618,17 @@ public class ForgeBingoPlugin extends Plugin
             ForgeBingoPanel p = panel;
             if (p != null) javax.swing.SwingUtilities.invokeLater(() -> p.setPixelFonts(pixel));
             else ForgeBingoPanel.usePixelFonts(pixel);
+            return;
+        }
+        if ("panelAnimations".equals(e.getKey()) || "panelImps".equals(e.getKey()))
+        {
+            boolean animate = config.panelAnimations();
+            boolean imps = config.panelImps();
+            ForgeBingoPanel p = panel;
+            if (p != null) javax.swing.SwingUtilities.invokeLater(() -> {
+                p.setAnimations(animate);
+                p.setImps(imps);
+            });
             return;
         }
         if ("apiBaseUrl".equals(e.getKey())) askedHost = null; // ask again for a newly typed address

@@ -61,34 +61,87 @@ class ForgeBingoPanel extends PluginPanel
     private static final int INNER = PluginPanel.PANEL_WIDTH - 2 * PAD - BAR - 14;
     /** wrap width for text inside a card (card padding + accent stripe) */
     private static final int CARD_TEXT = INNER - 22;
-    private static final Color CARD = ColorScheme.DARKER_GRAY_COLOR;
-    private static final Color CARD_HOVER = ColorScheme.DARKER_GRAY_HOVER_COLOR;
-    private static final Color MUTED = new Color(150, 150, 150);
-    private static final Color TEXT = new Color(220, 220, 220);
-    private static final Color ERROR = new Color(255, 112, 112);
-    private static final Color CLEAR = new Color(0, 0, 0, 0);
+    // the look (palette, fonts, painted cards and bars) lives in PanelUi
+    private static final Color MUTED = PanelUi.MUTED;
+    private static final Color TEXT = PanelUi.TEXT;
+    private static final Color ERROR = PanelUi.RED;
+    private static final Color GOLD = PanelUi.GOLD_SOFT;
+    private static final Color GOOD = PanelUi.GREEN;
+    private static final Color WAIT = PanelUi.AMBER;
 
-    // ---- fonts: "Clean" (smooth sans-serif, the default) or the game's own pixel fonts; chosen in the plugin settings
-    private static final Font CLEAN_SMALL = new Font(Font.SANS_SERIF, Font.PLAIN, 11);
-    private static final Font CLEAN_BODY = new Font(Font.SANS_SERIF, Font.PLAIN, 12);
-    private static final Font CLEAN_BOLD = new Font(Font.SANS_SERIF, Font.BOLD, 13);
+    // ---- fonts: "Clean" (the website's Cinzel headings over a smooth sans-serif, the default) or the game's own
+    // pixel fonts; chosen in the plugin settings
     private static volatile boolean pixelFonts;
 
-    static Font smallFont() { return pixelFonts ? FontManager.getRunescapeSmallFont() : CLEAN_SMALL; }
-    static Font bodyFont() { return pixelFonts ? FontManager.getRunescapeFont() : CLEAN_BODY; }
-    static Font boldFont() { return pixelFonts ? FontManager.getRunescapeBoldFont() : CLEAN_BOLD; }
+    // one font per role, in the same order in both sets: small, body, bold, heading, title, small capitals.
+    // The pixel set reuses three game fonts for six roles, so each role gets its own copy: a component's font can
+    // then be matched by identity when the setting changes, and swapped for the same role in the other set.
+    private static final Font[] CLEAN_FONTS = {PanelUi.CLEAN_SMALL, PanelUi.CLEAN_BODY, PanelUi.CLEAN_BOLD, PanelUi.CLEAN_HEAD, PanelUi.CLEAN_TITLE, PanelUi.CLEAN_CAPS};
+    private static Font[] pixelSet;
+
+    private static synchronized Font[] pixelFontSet()
+    {
+        if (pixelSet == null)
+        {
+            Font s = FontManager.getRunescapeSmallFont();
+            Font r = FontManager.getRunescapeFont();
+            Font b = FontManager.getRunescapeBoldFont();
+            pixelSet = new Font[] {s, r, b, b.deriveFont(b.getSize2D()), b.deriveFont(b.getSize2D() + 0.001f), s.deriveFont(s.getSize2D())};
+        }
+        return pixelSet;
+    }
+
+    private static Font font(int role) { return (pixelFonts ? pixelFontSet() : CLEAN_FONTS)[role]; }
+
+    static Font smallFont() { return font(0); }
+    static Font bodyFont() { return font(1); }
+    static Font boldFont() { return font(2); }
+    /** card and tile titles */
+    static Font headFont() { return font(3); }
+    /** the "ForgeBingo" name */
+    static Font titleFont() { return font(4); }
+    /** small capitals: section names, "REQUIREMENTS" */
+    static Font capsFont() { return font(5); }
+
+    /** A title in the heading font, or the plain bold one when the name has characters the heading font lacks. */
+    private static Font headFontFor(String text)
+    {
+        return PanelUi.headingFor(text, headFont(), boldFont());
+    }
 
     /** Switch fonts and restyle everything already on screen (cards built later pick the new fonts up anyway). */
     void setPixelFonts(boolean pixel)
     {
         if (pixel == pixelFonts) return;
-        Font[] from = pixelFonts ? new Font[] {FontManager.getRunescapeSmallFont(), FontManager.getRunescapeFont(), FontManager.getRunescapeBoldFont()}
-            : new Font[] {CLEAN_SMALL, CLEAN_BODY, CLEAN_BOLD};
+        Font[] from = pixelFonts ? pixelFontSet() : CLEAN_FONTS;
         pixelFonts = pixel;
-        Font[] to = {smallFont(), bodyFont(), boldFont()};
+        Font[] to = pixelFonts ? pixelFontSet() : CLEAN_FONTS;
         restyle(this, from, to);
         revalidate();
         repaint();
+    }
+
+    /** Turns every animation in the panel on or off (the "Side panel animations" setting). */
+    void setAnimations(boolean on)
+    {
+        PanelUi.animations = on;
+        syncPulse();
+        repaint();
+    }
+
+    /** Shows or hides the wandering imps (the "Side panel imps" setting). */
+    void setImps(boolean on)
+    {
+        imps.setEnabled(on);
+    }
+
+    /** Plugin shut down: stop every timer the panel owns. */
+    void dispose()
+    {
+        imps.dispose();
+        pulseTimer.stop();
+        upcomingTick.stop();
+        if (fireworks != null) fireworks.stop();
     }
 
     static void usePixelFonts(boolean pixel)
@@ -99,7 +152,7 @@ class ForgeBingoPanel extends PluginPanel
     private static void restyle(Component c, Font[] from, Font[] to)
     {
         Font f = c.getFont();
-        for (int i = 0; i < from.length; i++) if (from[i].equals(f)) { c.setFont(to[i]); break; }
+        for (int i = 0; i < from.length; i++) if (from[i] == f) { c.setFont(to[i]); break; }
         if (c instanceof java.awt.Container) for (Component k : ((java.awt.Container) c).getComponents()) restyle(k, from, to);
     }
 
@@ -115,17 +168,22 @@ class ForgeBingoPanel extends PluginPanel
     private final JLabel queueLabel = new JLabel(" ");
     private final JLabel teamLabel = new JLabel(" ");
     private final JLabel eventLabel = new JLabel(" ");
-    private final JProgressBar tilesBar = new JProgressBar();
-    private final JPanel boardCard = column();
+    private final PanelUi.GoldBar tilesBar = new PanelUi.GoldBar();
+    private final PanelUi.Card boardCard = new PanelUi.Card(null);
+    private final PanelUi.StatusDot statusDot = new PanelUi.StatusDot();
+    /** the website's imps, wandering over the cards */
+    final PanelImps imps = new PanelImps();
+    /** keeps the connection light and the open square's gold ring breathing; only runs while the panel is on screen */
+    private final javax.swing.Timer pulseTimer = new javax.swing.Timer(70, e -> pulse());
     private final JComboBox<ApiModels.BoardSummary> boardBox = new JComboBox<>();
     private final JPanel grid = new JPanel();
     private final JPanel gridWrap = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
     /** one tile, opened by clicking it on the grid: title, state, every task with its progress and how it is tracked */
-    private final JPanel detail = column();
+    private final PanelUi.Card detail = new PanelUi.Card(PanelUi.GOLD);
     /** the 3 open tiles closest to done, like the website's "What can I do next?" */
     private final JPanel nextUp = column();
     private String selectedTileId;
-    private final Map<String, JLabel> tileLabels = new ConcurrentHashMap<>();
+    private final Map<String, PanelUi.TileCell> tileLabels = new ConcurrentHashMap<>();
     /** the last board shown, so icon arrivals and "working on" changes can redraw without a server round trip */
     private ApiModels.BoardResponse lastBoard;
     private ItemManager lastItemManager;
@@ -156,9 +214,8 @@ class ForgeBingoPanel extends PluginPanel
         JPanel head = card(null);
         JPanel titleRow = new JPanel(new BorderLayout(6, 0));
         titleRow.setOpaque(false);
-        JLabel title = new JLabel("ForgeBingo");
-        title.setFont(boldFont());
-        title.setForeground(ColorScheme.BRAND_ORANGE);
+        PanelUi.GoldTitle title = new PanelUi.GoldTitle("ForgeBingo");
+        title.setFont(titleFont());
         titleRow.add(title, BorderLayout.CENTER);
         headToggle.setFont(smallFont());
         headToggle.setForeground(MUTED);
@@ -175,9 +232,17 @@ class ForgeBingoPanel extends PluginPanel
             }
         });
         head.add(fullWidth(titleRow, -1));
-        head.add(Box.createVerticalStrut(2));
+        head.add(Box.createVerticalStrut(3));
         status.setFont(smallFont());
-        head.add(left(status));
+        status.setForeground(MUTED);
+        JPanel statusRow = new JPanel(new BorderLayout(4, 0));
+        statusRow.setOpaque(false);
+        JPanel dotWrap = new JPanel(new BorderLayout());
+        dotWrap.setOpaque(false);
+        dotWrap.add(statusDot, BorderLayout.NORTH);
+        statusRow.add(dotWrap, BorderLayout.WEST);
+        statusRow.add(status, BorderLayout.CENTER);
+        head.add(left(statusRow));
         scope.setFont(smallFont());
         scope.setForeground(MUTED);
         head.add(left(scope));
@@ -200,6 +265,8 @@ class ForgeBingoPanel extends PluginPanel
         add(content, gap(4));
         add(content, section("Board"));
         boardBox.setFocusable(false);
+        boardBox.setFont(smallFont());
+        boardBox.putClientProperty(PanelImps.PLATFORM, Boolean.TRUE);
         boardBox.setToolTipText("Pick which team board to show and send drops to");
         add(content, fullWidth(boardBox, 26));
         add(content, gap(6));
@@ -220,22 +287,16 @@ class ForgeBingoPanel extends PluginPanel
         });
 
         // --- team + progress card (filled by setBoard)
-        teamLabel.setFont(boldFont());
-        teamLabel.setForeground(Color.WHITE);
+        teamLabel.setFont(headFont());
+        teamLabel.setForeground(new Color(0xfff3da));
         eventLabel.setFont(smallFont());
         eventLabel.setForeground(MUTED);
-        tilesBar.setStringPainted(true);
         tilesBar.setFont(smallFont());
-        tilesBar.setForeground(ColorScheme.BRAND_ORANGE);
-        tilesBar.setBackground(ColorScheme.DARK_GRAY_COLOR);
-        tilesBar.setBorder(BorderFactory.createEmptyBorder());
-        boardCard.setBackground(CARD);
-        boardCard.setOpaque(true);
-        boardCard.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+        tilesBar.setForeground(PanelUi.GOLD_DARK);
         boardCard.add(left(teamLabel));
         boardCard.add(left(eventLabel));
-        boardCard.add(Box.createVerticalStrut(6));
-        boardCard.add(fullWidth(tilesBar, 16));
+        boardCard.add(Box.createVerticalStrut(7));
+        boardCard.add(fullWidth(tilesBar, 17));
         boardCard.setVisible(false);
         add(content, gap(10));
         add(content, boardCard);
@@ -246,24 +307,45 @@ class ForgeBingoPanel extends PluginPanel
         gridWrap.add(grid);
         add(content, gap(8));
         add(content, gridWrap);
-        detail.setOpaque(true);
-        detail.setBackground(CARD);
-        detail.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createMatteBorder(0, 3, 0, 0, ColorScheme.BRAND_ORANGE),
-            BorderFactory.createEmptyBorder(8, 8, 8, 8)));
         detail.setVisible(false);
         add(content, gap(6));
         add(content, detail);
         add(content, nextUp);
         // no leaderboard or notices list here (owner, 2026-11-10): drops are announced in chat instead
 
-        JScrollPane scroll = new JScrollPane(content,
+        // the imps are painted over the column by a layer, in the column's own coordinates (they scroll with it)
+        JScrollPane scroll = new JScrollPane(new javax.swing.JLayer<JComponent>(content, imps),
             JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
         scroll.setBorder(BorderFactory.createEmptyBorder());
         scroll.getVerticalScrollBar().setPreferredSize(new Dimension(BAR, 0));
         scroll.getVerticalScrollBar().setUnitIncrement(16);
         scroll.getViewport().setBackground(ColorScheme.DARK_GRAY_COLOR);
         add(scroll, BorderLayout.CENTER);
+
+        pulseTimer.setCoalesce(true);
+        addHierarchyListener(e -> {
+            if ((e.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0) syncPulse();
+        });
+    }
+
+    private void syncPulse()
+    {
+        boolean run = PanelUi.animations && isShowing();
+        if (run && !pulseTimer.isRunning()) pulseTimer.start();
+        else if (!run && pulseTimer.isRunning()) pulseTimer.stop();
+    }
+
+    /** Redraws the two things that breathe: the connection light and the gold ring on the open square. */
+    private void pulse()
+    {
+        if (!isShowing())
+        {
+            pulseTimer.stop();
+            return;
+        }
+        statusDot.repaint();
+        PanelUi.TileCell open = selectedTileId == null ? null : tileLabels.get(selectedTileId);
+        if (open != null) open.repaint();
     }
 
     /**
@@ -297,8 +379,9 @@ class ForgeBingoPanel extends PluginPanel
 
     void setStatus(boolean ok, String text)
     {
-        status.setText(wrapHtml(text, INNER - 16));
-        status.setForeground(ok ? ColorScheme.PROGRESS_COMPLETE_COLOR : ColorScheme.PROGRESS_ERROR_COLOR);
+        status.setText(wrapHtml(text, INNER - 32));
+        status.setForeground(ok ? GOOD : ERROR);
+        statusDot.setColour(ok ? GOOD : ERROR);
     }
 
     void setScope(String text)
@@ -379,7 +462,7 @@ class ForgeBingoPanel extends PluginPanel
     {
         queueLabel.setText(wrapHtml(size == 0 ? "Nothing waiting to send"
             : size + " waiting to send" + (lastError == null ? "" : " (" + lastError + ")"), INNER - 16));
-        queueLabel.setForeground(size == 0 ? MUTED : ColorScheme.PROGRESS_INPROGRESS_COLOR);
+        queueLabel.setForeground(size == 0 ? MUTED : WAIT);
     }
 
     void setBoards(List<ApiModels.BoardSummary> boards, String activeId)
@@ -404,7 +487,7 @@ class ForgeBingoPanel extends PluginPanel
     {
         teamNews.removeAll();
         Fireworks fw = new Fireworks("TEAM TILE DONE!");
-        JPanel card = card(ColorScheme.PROGRESS_COMPLETE_COLOR);
+        PanelUi.Card card = card(GOOD);
         card.add(fullWidth(fw, Fireworks.HEIGHT));
         card.add(left(cardText("Your team finished " + (tileTitle == null || tileTitle.isEmpty() ? "a tile" : tileTitle) + "!", Color.WHITE)));
         teamNews.add(gap(6));
@@ -412,6 +495,7 @@ class ForgeBingoPanel extends PluginPanel
         teamNews.setVisible(true);
         teamNews.revalidate();
         teamNews.repaint();
+        card.fadeIn();
         fw.start();
         javax.swing.Timer hide = new javax.swing.Timer(9000, e -> {
             if (teamNews.getComponentCount() > 1 && teamNews.getComponent(1) == card)
@@ -450,7 +534,9 @@ class ForgeBingoPanel extends PluginPanel
     {
         lastBoard = board;
         lastItemManager = itemManager;
-        teamLabel.setText(wrapHtml(board.teamName == null ? "Your team" : board.teamName, CARD_TEXT));
+        String teamName = board.teamName == null ? "Your team" : board.teamName;
+        teamLabel.setFont(headFontFor(teamName));
+        teamLabel.setText(wrapHtml(teamName, CARD_TEXT));
         String ev = board.event != null && board.event.name != null ? board.event.name : "";
         if (board.event != null && !board.event.active) ev += (ev.isEmpty() ? "" : " ") + "(not running)";
         eventLabel.setText(ev.isEmpty() ? " " : wrapHtml(ev, CARD_TEXT));
@@ -465,12 +551,12 @@ class ForgeBingoPanel extends PluginPanel
         tilesBar.setMaximum(Math.max(1, total));
         tilesBar.setValue(done);
         tilesBar.setString(blackout ? "BLACKOUT! " + done + " / " + total : done + " / " + total + " tiles done");
-        tilesBar.setForeground(blackout ? ColorScheme.PROGRESS_COMPLETE_COLOR : ColorScheme.BRAND_ORANGE);
+        tilesBar.setForeground(blackout ? PanelUi.GREEN_DARK : PanelUi.GOLD_DARK);
         boardCard.setVisible(true);
 
         tileLabels.clear();
         grid.removeAll();
-        grid.setLayout(new GridLayout(size, size, 2, 2));
+        grid.setLayout(new GridLayout(size, size, size > 6 ? 1 : 2, size > 6 ? 1 : 2));
         ApiModels.Tile[][] cells = new ApiModels.Tile[size][size];
         for (ApiModels.Tile t : board.tiles)
         {
@@ -541,8 +627,8 @@ class ForgeBingoPanel extends PluginPanel
     {
         String previous = selectedTileId;
         selectedTileId = t.id;
-        if (previous != null && tileLabels.get(previous) != null) tileLabels.get(previous).setBorder(BorderFactory.createLineBorder(CLEAR, 2));
-        if (t.id != null && tileLabels.get(t.id) != null) tileLabels.get(t.id).setBorder(BorderFactory.createLineBorder(ColorScheme.BRAND_ORANGE, 2));
+        if (previous != null && tileLabels.get(previous) != null) tileLabels.get(previous).setSelected(false);
+        if (t.id != null && tileLabels.get(t.id) != null) tileLabels.get(t.id).setSelected(true);
         if (fireworks != null && (opened || !t.completed))
         {
             fireworks.stop();
@@ -565,8 +651,8 @@ class ForgeBingoPanel extends PluginPanel
         JPanel head = new JPanel(new BorderLayout(6, 0));
         head.setOpaque(false);
         JLabel title = new JLabel(wrapHtml(TileInfo.shownTitle(t), CARD_TEXT - 22));
-        title.setFont(boldFont());
-        title.setForeground(ColorScheme.BRAND_ORANGE);
+        title.setFont(headFontFor(TileInfo.shownTitle(t)));
+        title.setForeground(GOLD);
         head.add(title, BorderLayout.CENTER);
         JLabel close = new JLabel("x");
         close.setFont(boldFont());
@@ -608,7 +694,7 @@ class ForgeBingoPanel extends PluginPanel
         {
             JLabel pts = new JLabel(BoardOverlay.points(TileInfo.worth(t)));
             pts.setFont(smallFont());
-            pts.setForeground(ColorScheme.BRAND_ORANGE);
+            pts.setForeground(GOLD);
             pts.setVerticalAlignment(SwingConstants.TOP);
             stateRow.add(pts, BorderLayout.EAST);
         }
@@ -616,7 +702,7 @@ class ForgeBingoPanel extends PluginPanel
         if (t.description != null && !t.description.isEmpty()) detail.add(left(cardText(t.description, MUTED)));
         if (!t.completed && t.workingOn != null && !t.workingOn.isEmpty())
         {
-            detail.add(left(cardText("Working on it: " + workingNames(t), ColorScheme.BRAND_ORANGE)));
+            detail.add(left(cardText("Working on it: " + workingNames(t), GOLD)));
         }
         // REQUIREMENTS: one box per task, laid out like the website's tile card (owner, 2026-11-11)
         if (!t.tasks.isEmpty())
@@ -631,7 +717,7 @@ class ForgeBingoPanel extends PluginPanel
         {
             counted += k.approvedQty;
             waiting += k.pendingQty;
-            detail.add(taskBox(t, k, secret));
+            detail.add(taskBox(t, k, secret, opened));
             detail.add(gap(6));
         }
 
@@ -642,28 +728,30 @@ class ForgeBingoPanel extends PluginPanel
         String proof = t.completed ? "Done - proof accepted."
             : counted == 0 && waiting == 0 ? "No proof sent yet."
             : (counted > 0 ? counted + " counted" : "") + (counted > 0 && waiting > 0 ? ", " : "") + (waiting > 0 ? waiting + " waiting for review" : "") + ".";
-        detail.add(left(cardText(proof, t.completed ? ColorScheme.PROGRESS_COMPLETE_COLOR : waiting > 0 ? ColorScheme.PROGRESS_INPROGRESS_COLOR : Color.LIGHT_GRAY)));
+        detail.add(left(cardText(proof, t.completed ? GOOD : waiting > 0 ? WAIT : TEXT)));
         detail.add(gap(8));
         if (!t.completed && t.id != null)
         {
             boolean on = plugin.isWorkingOn(t);
             JButton pin = button(on ? "Stop working on it" : "I'm working on this",
                 on ? "Take this tile off your team's Working on list" : "Show your team you're going for this tile");
-            if (on) pin.setForeground(ColorScheme.BRAND_ORANGE);
+            if (on) pin.setForeground(GOLD);
             pin.addActionListener(e -> {
                 plugin.setWorkingOn(t.id, !on);
                 if (lastBoard != null) setBoard(lastBoard, null, lastItemManager);
             });
-            detail.add(fullWidth(pin, 24));
+            detail.add(fullWidth(pin, 26));
         }
         detail.setVisible(true);
         detail.revalidate();
         detail.repaint();
+        // a different tile was opened: the card settles in (not on live refreshes of the tile already open)
+        if (opened && (previous == null || !previous.equals(t.id))) detail.fadeIn();
     }
 
     void closeTile()
     {
-        if (selectedTileId != null && tileLabels.get(selectedTileId) != null) tileLabels.get(selectedTileId).setBorder(BorderFactory.createLineBorder(CLEAR, 2));
+        if (selectedTileId != null && tileLabels.get(selectedTileId) != null) tileLabels.get(selectedTileId).setSelected(false);
         selectedTileId = null;
         if (fireworks != null)
         {
@@ -691,8 +779,8 @@ class ForgeBingoPanel extends PluginPanel
 
     static Color stateTextColour(ApiModels.Tile t)
     {
-        return t.completed ? ColorScheme.PROGRESS_COMPLETE_COLOR : TileInfo.needsChangesReason(t) != null ? ERROR
-            : TileInfo.waiting(t) ? ColorScheme.PROGRESS_INPROGRESS_COLOR : Color.LIGHT_GRAY;
+        return t.completed ? GOOD : TileInfo.needsChangesReason(t) != null ? ERROR
+            : TileInfo.waiting(t) ? WAIT : TEXT;
     }
 
     /** How a task gets ticked off, in the player's words. */
@@ -732,15 +820,14 @@ class ForgeBingoPanel extends PluginPanel
 
     private JLabel tileButton(ApiModels.Tile t, ItemManager itemManager)
     {
-        JLabel l = new JLabel();
-        l.setHorizontalAlignment(JLabel.CENTER);
-        l.setOpaque(true);
+        PanelUi.TileCell l = new PanelUi.TileCell();
         l.setPreferredSize(new Dimension(cell, cell));
         if (t == null)
         {
             l.setBackground(ColorScheme.DARKER_GRAY_COLOR);
             return l;
         }
+        l.makeInteractive();
         TileInfo.State st = TileInfo.state(t);
         l.setBackground(stateColour(st));
         if (st == TileInfo.State.SECRET)
@@ -761,8 +848,7 @@ class ForgeBingoPanel extends PluginPanel
             if (k.pendingQty > 0) tip.append(" (+").append(k.pendingQty).append(" pending)");
         }
         l.setToolTipText(tip.append("</html>").toString());
-        l.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        l.setBorder(BorderFactory.createLineBorder(t.id != null && t.id.equals(selectedTileId) ? ColorScheme.BRAND_ORANGE : CLEAR, 2));
+        l.setSelected(t.id != null && t.id.equals(selectedTileId));
         if (t.id != null) tileLabels.put(t.id, l);
         l.addMouseListener(new MouseAdapter()
         {
@@ -780,7 +866,7 @@ class ForgeBingoPanel extends PluginPanel
     private static JLabel smallCaps(String text)
     {
         JLabel l = new JLabel(text.toUpperCase());
-        l.setFont(smallFont());
+        l.setFont(capsFont());
         l.setForeground(new Color(0xc8a35a));
         return l;
     }
@@ -803,15 +889,10 @@ class ForgeBingoPanel extends PluginPanel
      * One requirement, website style: icon box, name and count, a thin bar, then either each item ("x1") for
      * one-of-each tasks or "Any of" with the items it accepts; how it is tracked and "Send screenshot" underneath.
      */
-    private JPanel taskBox(ApiModels.Tile t, ApiModels.Task k, boolean secret)
+    private JPanel taskBox(ApiModels.Tile t, ApiModels.Task k, boolean secret, boolean animate)
     {
         boolean done = k.completed || t.completed;
-        JPanel box = column();
-        box.setOpaque(true);
-        box.setBackground(new Color(0x1e1e1e));
-        box.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(done ? new Color(0x2f5a2f) : new Color(0x3a3a3a)),
-            BorderFactory.createEmptyBorder(6, 6, 6, 6)));
+        PanelUi.Card box = new PanelUi.Card(null).inset(done ? PanelUi.GREEN_DARK : null).pad(7, 7, 7, 7);
         List<Integer> items = k.itemIds == null ? java.util.Collections.<Integer>emptyList() : k.itemIds;
 
         // icon + name + count
@@ -842,24 +923,26 @@ class ForgeBingoPanel extends PluginPanel
         top.add(iconBox, BorderLayout.WEST);
         JLabel name = new JLabel(wrapHtml(k.description == null || k.description.isEmpty() ? "Task" : k.description, CARD_TEXT - 80));
         name.setFont(bodyFont());
-        name.setForeground(done ? ColorScheme.PROGRESS_COMPLETE_COLOR : Color.WHITE);
+        name.setForeground(done ? GOOD : new Color(0xf4eee2));
         top.add(name, BorderLayout.CENTER);
         int need = Math.max(1, k.requiredQty);
-        JLabel count = new JLabel(done ? "Done" : Math.min(need, k.approvedQty) + "/" + need);
+        JLabel count = new JLabel(done ? "Done" : compact(Math.min(need, k.approvedQty)) + "/" + compact(need));
+        if (need >= 100_000) count.setToolTipText(String.format("%,d / %,d", Math.min(need, k.approvedQty), need));
         count.setFont(smallFont());
-        count.setForeground(done ? ColorScheme.PROGRESS_COMPLETE_COLOR : MUTED);
+        count.setForeground(done ? GOOD : MUTED);
         count.setVerticalAlignment(SwingConstants.TOP);
         top.add(count, BorderLayout.EAST);
         box.add(fullWidth(top, -1));
 
-        // thin bar
-        box.add(gap(4));
-        JProgressBar bar = new JProgressBar(0, need);
-        bar.setValue(done ? need : Math.min(need, k.approvedQty));
-        bar.setForeground(done ? ColorScheme.PROGRESS_COMPLETE_COLOR : ColorScheme.BRAND_ORANGE);
-        bar.setBackground(new Color(0x0f0f0f));
-        bar.setBorder(BorderFactory.createEmptyBorder());
-        box.add(fullWidth(bar, 5));
+        // thin bar: fills up when the tile is opened, sits still on live refreshes
+        box.add(gap(5));
+        PanelUi.GoldBar bar = new PanelUi.GoldBar();
+        bar.putClientProperty(PanelImps.PLATFORM, null);
+        bar.setMaximum(need);
+        bar.setForeground(done ? PanelUi.GREEN : PanelUi.GOLD);
+        int have = done ? need : Math.min(need, k.approvedQty);
+        if (animate) bar.setValue(have); else bar.setValueNow(have);
+        box.add(fullWidth(bar, 6));
 
         List<ItemSlots.Slot> slots = ItemSlots.of(k);
         if (!slots.isEmpty())
@@ -876,11 +959,11 @@ class ForgeBingoPanel extends PluginPanel
                 String label = s.itemIds.size() == 1 ? plugin.itemName(s.itemIds.get(0)) : "Any one: " + anyOf(s.itemIds);
                 JLabel n = new JLabel(wrapHtml(label + (s.pending > 0 && !sDone ? " (waiting)" : ""), CARD_TEXT - 70));
                 n.setFont(smallFont());
-                n.setForeground(sDone ? ColorScheme.PROGRESS_COMPLETE_COLOR : s.pending > 0 ? ColorScheme.PROGRESS_INPROGRESS_COLOR : TEXT);
+                n.setForeground(sDone ? GOOD : s.pending > 0 ? WAIT : TEXT);
                 row.add(n, BorderLayout.CENTER);
                 JLabel x = new JLabel(sDone ? "done" : s.need > 1 ? s.approved + "/" + s.need : "x" + s.need);
                 x.setFont(smallFont());
-                x.setForeground(sDone ? ColorScheme.PROGRESS_COMPLETE_COLOR : MUTED);
+                x.setForeground(sDone ? GOOD : MUTED);
                 row.add(x, BorderLayout.EAST);
                 box.add(fullWidth(row, -1));
             }
@@ -908,10 +991,10 @@ class ForgeBingoPanel extends PluginPanel
 
         if (!done)
         {
-            if (k.pendingQty > 0) box.add(left(cardText(k.pendingQty + " waiting for review", ColorScheme.PROGRESS_INPROGRESS_COLOR)));
+            if (k.pendingQty > 0) box.add(left(cardText(k.pendingQty + " waiting for review", WAIT)));
             box.add(gap(3));
             // automatic tasks need no explanation (owner, 2026-11-12); only manual ones say how to prove them
-            if (k.sourceType == null || "manual".equals(k.sourceType)) box.add(left(cardText(trackingText(k), MUTED)));
+            if (k.sourceType == null || "manual".equals(k.sourceType)) box.add(left(cardText(trackingText(k), MUTED, CARD_TEXT - 44)));
             if (!secret && k.id != null)
             {
                 // RuneLite sends its own proof: a game screenshot straight to this task, waiting for review
@@ -921,11 +1004,24 @@ class ForgeBingoPanel extends PluginPanel
                 String boardId = lastBoard == null ? null : lastBoard.teamBoardId;
                 String tileName = TileInfo.shownTitle(t);
                 shot.addActionListener(e -> plugin.sendScreenshotProof(boardId, k.id, what, tileName));
-                box.add(gap(4));
-                box.add(fullWidth(shot, 22));
+                box.add(gap(5));
+                box.add(fullWidth(shot, 24));
             }
         }
         return fullWidth(box, -1);
+    }
+
+    /** Big counts stay short so the task's name keeps its room: 3100000 -> "3.1M", 250000 -> "250K". */
+    static String compact(int n)
+    {
+        if (n >= 1_000_000) return trimZero(String.format(java.util.Locale.ROOT, "%.1f", n / 1_000_000.0)) + "M";
+        if (n >= 100_000) return (n / 1000) + "K";
+        return String.valueOf(n);
+    }
+
+    private static String trimZero(String s)
+    {
+        return s.endsWith(".0") ? s.substring(0, s.length() - 2) : s;
     }
 
     /** "Hydra's eye, Hydra's fang or Hydra's heart" */
@@ -956,27 +1052,22 @@ class ForgeBingoPanel extends PluginPanel
     /** One "working on" / "closest to done" tile: a clickable card with the count on the right. */
     private JPanel nextUpRow(ApiModels.Tile t, boolean pinned)
     {
-        JPanel row = new JPanel(new BorderLayout(6, 0));
-        row.setBackground(CARD);
-        row.setBorder(pinned
-            ? BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 3, 0, 0, ColorScheme.BRAND_ORANGE), BorderFactory.createEmptyBorder(5, 5, 5, 8))
-            : BorderFactory.createEmptyBorder(5, 8, 5, 8));
+        PanelUi.Card row = new PanelUi.Card(pinned ? PanelUi.GOLD : null).pad(6, pinned ? 6 : 8, 6, 8).hoverable();
+        row.setLayout(new BorderLayout(6, 0));
         String count = TileInfo.countText(t);
         JLabel countLabel = new JLabel(count);
         countLabel.setFont(smallFont());
-        countLabel.setForeground(ColorScheme.BRAND_ORANGE);
+        countLabel.setForeground(GOLD);
         int textW = CARD_TEXT - (count.isEmpty() ? 0 : countLabel.getPreferredSize().width + 6);
         String who = pinned ? workingNames(t) : "";
         JLabel name = new JLabel(who.isEmpty() ? wrapHtml(t.title, Math.max(60, textW))
             : "<html><body style='width:" + Math.max(60, textW) + "px'>" + esc(t.title)
-              + "<br><font color='#969696'>" + esc(who) + "</font></body></html>");
+              + "<br><font color='#a69d8f'>" + esc(who) + "</font></body></html>");
         name.setFont(smallFont());
         name.setForeground(TEXT);
         row.add(name, BorderLayout.CENTER);
         if (!count.isEmpty()) row.add(countLabel, BorderLayout.EAST);
-        row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         row.setToolTipText("Open this tile");
-        hover(row, CARD, CARD_HOVER);
         row.addMouseListener(new MouseAdapter()
         {
             @Override
@@ -991,15 +1082,12 @@ class ForgeBingoPanel extends PluginPanel
     /** A status message card with a coloured left edge (green ok, amber warning/info, red error). */
     private static JPanel message(String text, ConnectionStatus.Level level)
     {
-        Color edge = level == ConnectionStatus.Level.OK ? ColorScheme.PROGRESS_COMPLETE_COLOR
-            : level == ConnectionStatus.Level.ERROR ? ColorScheme.PROGRESS_ERROR_COLOR
-            : level == ConnectionStatus.Level.INFO ? ColorScheme.MEDIUM_GRAY_COLOR : ColorScheme.PROGRESS_INPROGRESS_COLOR;
+        Color edge = level == ConnectionStatus.Level.OK ? GOOD
+            : level == ConnectionStatus.Level.ERROR ? ERROR
+            : level == ConnectionStatus.Level.INFO ? new Color(0x7d7262) : WAIT;
         Color fg = level == ConnectionStatus.Level.ERROR ? ERROR : TEXT;
-        JPanel p = new JPanel(new BorderLayout());
-        p.setBackground(level == ConnectionStatus.Level.ERROR ? new Color(58, 34, 34) : CARD);
-        p.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createMatteBorder(0, 3, 0, 0, edge),
-            BorderFactory.createEmptyBorder(5, 7, 5, 7)));
+        PanelUi.Card p = new PanelUi.Card(edge).pad(6, 7, 6, 7);
+        p.setLayout(new BorderLayout());
         JLabel l = new JLabel(wrapHtml(text, CARD_TEXT));
         l.setFont(smallFont());
         l.setForeground(fg);
@@ -1007,36 +1095,21 @@ class ForgeBingoPanel extends PluginPanel
         return fullWidth(p, -1);
     }
 
-    private static JPanel card(Color edge)
+    private static PanelUi.Card card(Color edge)
     {
-        JPanel p = column();
-        p.setOpaque(true);
-        p.setBackground(CARD);
-        Border pad = BorderFactory.createEmptyBorder(8, 8, 8, 8);
-        p.setBorder(edge == null ? pad : BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 3, 0, 0, edge), pad));
-        return p;
+        return new PanelUi.Card(edge);
     }
 
     private static JComponent section(String text)
     {
-        JLabel l = new JLabel(text.toUpperCase());
-        l.setFont(smallFont());
-        l.setForeground(ColorScheme.BRAND_ORANGE);
-        JPanel p = new JPanel(new BorderLayout());
-        p.setOpaque(false);
-        p.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createEmptyBorder(4, 0, 4, 0),
-            BorderFactory.createCompoundBorder(
-                BorderFactory.createMatteBorder(0, 0, 1, 0, ColorScheme.MEDIUM_GRAY_COLOR),
-                BorderFactory.createEmptyBorder(0, 0, 3, 0))));
-        p.add(l, BorderLayout.WEST);
-        return fullWidth(p, -1);
+        PanelUi.SectionHeader h = new PanelUi.SectionHeader(text);
+        h.setFont(capsFont());
+        return fullWidth(h, -1);
     }
 
     private static JButton button(String text, String tip)
     {
-        JButton b = new JButton(text);
-        b.setFocusable(false);
+        JButton b = new PanelUi.StoneButton(text);
         b.setFont(smallFont());
         b.setToolTipText(tip);
         return b;

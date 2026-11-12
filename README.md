@@ -55,6 +55,7 @@ you don't walk where you click; it closes by itself when a monster attacks you (
 - **Screenshots:** screenshot on matched drop (on), include sidebar in screenshots (off)
 - **Celebrations** and **chat notices**
 - **Board overlay:** hotkey, close when attacked, animations
+- **Side panel:** font (clean or RuneScape), animations (on), imps that wander over the panel (on)
 
 ## Building
 
@@ -66,3 +67,6 @@ you don't walk where you click; it closes by itself when a monster attacks you (
 ## License
 
 BSD 2-Clause, see [LICENSE](LICENSE).
+
+The side panel's heading font is Cinzel, used under the SIL Open Font License 1.1
+(see `src/main/resources/com/forgebingo/fonts/Cinzel-OFL.txt`). The imps are ForgeBingo's own pixel art.

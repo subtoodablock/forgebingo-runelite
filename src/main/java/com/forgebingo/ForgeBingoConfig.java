@@ -187,6 +187,22 @@ public interface ForgeBingoConfig extends Config
         return PanelFont.CLEAN;
     }
 
+    @ConfigItem(keyName = "panelAnimations", name = "Side panel animations",
+        description = "Gentle motion in the side panel: bars that fill, cards that fade in, a soft glow on the open tile",
+        position = 6)
+    default boolean panelAnimations()
+    {
+        return true;
+    }
+
+    @ConfigItem(keyName = "panelImps", name = "Side panel imps",
+        description = "Little imps wander over the side panel, like on the website. Click one to make it jump.",
+        position = 6)
+    default boolean panelImps()
+    {
+        return true;
+    }
+
     @ConfigSection(name = "Board overlay", description = "The bingo board drawn over the game", position = 7)
     String boardOverlay = "boardOverlay";
 
