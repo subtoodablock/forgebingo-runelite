@@ -102,6 +102,18 @@ public final class ApiClient
         return execute(builder(url("v1", "hello")).post(body).build(), ApiModels.HelloResponse.class);
     }
 
+    /**
+     * POST /v1/wom/update {rsn}: asks the server to refresh this player's Wise Old Man stats for the bingos that track
+     * them (sent on logout / world hop). The server rate-limits it; a 404 means this server has no WOM connector yet.
+     */
+    public ApiResult<ApiModels.WomUpdateResponse> womUpdate(String rsn)
+    {
+        String name = Sanitizer.normalizeRsn(rsn);
+        if (!Sanitizer.validRsn(name)) return new ApiResult<>(400, null, "not logged in", "invalid_rsn", null, 0);
+        RequestBody body = RequestBody.create(JSON, gson.toJson(java.util.Collections.singletonMap("rsn", name)));
+        return execute(builder(url("v1", "wom", "update")).post(body).build(), ApiModels.WomUpdateResponse.class);
+    }
+
     /** GET /v1/boards: non-draft events the user plays in. Poll no faster than every 5 s. */
     public ApiResult<ApiModels.BoardsResponse> boards()
     {

@@ -399,8 +399,31 @@ public class ForgeBingoPlugin extends Plugin
         executor.execute(() -> sendHello(rsn, accountHash));
     }
 
+    /**
+     * Wise Old Man connector: after a session (logout / world hop) ask ForgeBingo to refresh this player's WOM stats, so
+     * XP / boss KC / EHP tiles catch up straight away. The server queues it for bingos with WOM tracking on and rate
+     * limits it. A server without the connector answers 404: then we stop asking for this session.
+     */
+    private void requestWomUpdate()
+    {
+        String rsn = lastHelloRsn;
+        ApiClient a = api;
+        if (!config.womUpdateOnLogout() || womUnavailable || rsn == null || a == null || !a.configured()) return;
+        executor.execute(() -> {
+            ApiResult<ApiModels.WomUpdateResponse> r = a.womUpdate(rsn);
+            if (r.status == 404 || r.status == 501) womUnavailable = true;
+            else if (!r.ok()) log.debug("wom update failed: {}", r.describe());
+        });
+    }
+
+    /** the name the last hello was sent for (the player's RSN) */
+    private volatile String lastHelloRsn;
+    /** this server has no Wise Old Man connector: don't keep asking */
+    private volatile boolean womUnavailable;
+
     private void sendHello(String rsn, String accountHash)
     {
+        lastHelloRsn = rsn;
         ApiClient a = api;
         if (!running || a == null)
         {
@@ -1190,6 +1213,7 @@ public class ForgeBingoPlugin extends Plugin
     {
         // logging out or hopping closes the board (map LOADING does not; the input ignores clicks until LOGGED_IN)
         if (e.getGameState() == GameState.LOGIN_SCREEN || e.getGameState() == GameState.HOPPING || e.getGameState() == GameState.CONNECTION_LOST) boardOverlay.close();
+        if (e.getGameState() == GameState.LOGIN_SCREEN || e.getGameState() == GameState.HOPPING) requestWomUpdate();
         if (e.getGameState() == GameState.LOGGED_IN)
         {
             helloPending = true; // another account may have logged in: verify again
@@ -1381,6 +1405,9 @@ public class ForgeBingoPlugin extends Plugin
 
     /** milliseconds between spotting a drop and taking its screenshot */
     private static final long SCREENSHOT_DELAY_MS = 1200;
+    /** minimum time between "Send screenshot" proofs */
+    private static final long SCREENSHOT_COOLDOWN_MS = 5000;
+    private volatile long lastProofShotAt;
 
     private void requestDropFrame(String eventId)
     {
@@ -1448,6 +1475,13 @@ public class ForgeBingoPlugin extends Plugin
      */
     void sendScreenshotProof(String teamBoardId, String taskId, String what, String tileName)
     {
+        // 5-second cooldown between proof screenshots (owner, 2026-11-12)
+        long since = System.currentTimeMillis() - lastProofShotAt;
+        if (since < SCREENSHOT_COOLDOWN_MS)
+        {
+            notice("Wait " + ((SCREENSHOT_COOLDOWN_MS - since + 999) / 1000) + "s before the next screenshot.", true);
+            return;
+        }
         String team = teamBoardId != null && !teamBoardId.isEmpty() ? teamBoardId : config.activeBoardId();
         ApiClient a = api;
         if (taskId == null || team == null || team.isEmpty() || a == null || !a.configured())
@@ -1460,6 +1494,7 @@ public class ForgeBingoPlugin extends Plugin
             notice("Log in (and close the bank PIN) to take a screenshot.", true);
             return;
         }
+        lastProofShotAt = System.currentTimeMillis();
         drawManager.requestNextFrameListener(image -> {
             // read the player's name here, on the client thread, as the frame is captured
             String player = client.getLocalPlayer() == null ? null : client.getLocalPlayer().getName();

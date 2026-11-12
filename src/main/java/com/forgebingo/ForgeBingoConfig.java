@@ -171,6 +171,14 @@ public interface ForgeBingoConfig extends Config
         }
     }
 
+    @ConfigItem(keyName = "womUpdateOnLogout", name = "Update Wise Old Man on logout",
+        description = "When you log out or hop worlds, ask ForgeBingo to refresh your Wise Old Man stats for bingos that track them (XP, boss KC, EHP/EHB tiles)",
+        position = 8)
+    default boolean womUpdateOnLogout()
+    {
+        return true;
+    }
+
     @ConfigItem(keyName = "panelFont", name = "Side panel font",
         description = "Clean: smooth, easy-to-read text. RuneScape: the game's own pixel font.",
         position = 6)

@@ -32,6 +32,14 @@ public final class ApiModels
     }
 
     /** One membership in a hello response. */
+    /** {@code POST /v1/wom/update}: how many bingos queued a Wise Old Man refresh for this player. */
+    public static final class WomUpdateResponse
+    {
+        public int queued;
+        /** false when none of the player's bingos tracks Wise Old Man */
+        public boolean womEnabled;
+    }
+
     public static final class Membership
     {
         public String eventId;
