@@ -651,7 +651,7 @@ class ForgeBingoPanel extends PluginPanel
             case "kc": return "Counts by itself from your kill count message";
             case "level": return "Counts by itself when you level up";
             case "wom_gain": return "Tracked by Wise Old Man (team total)";
-            default: return "Needs a screenshot or video: add proof on the website";
+            default: return "Needs a screenshot: use Send screenshot below, or add proof on the website";
         }
     }
 
@@ -852,7 +852,8 @@ class ForgeBingoPanel extends PluginPanel
         {
             if (k.pendingQty > 0) box.add(left(cardText(k.pendingQty + " waiting for review", ColorScheme.PROGRESS_INPROGRESS_COLOR)));
             box.add(gap(3));
-            box.add(left(cardText(trackingText(k), MUTED)));
+            // automatic tasks need no explanation (owner, 2026-11-12); only manual ones say how to prove them
+            if (k.sourceType == null || "manual".equals(k.sourceType)) box.add(left(cardText(trackingText(k), MUTED)));
             if (!secret && k.id != null)
             {
                 // RuneLite sends its own proof: a game screenshot straight to this task, waiting for review

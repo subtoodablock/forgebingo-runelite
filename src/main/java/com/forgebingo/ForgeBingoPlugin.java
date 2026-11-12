@@ -17,6 +17,7 @@ import com.forgebingo.core.QueueProcessor;
 import com.forgebingo.core.QueuedEvent;
 import com.forgebingo.core.Sanitizer;
 import com.forgebingo.core.ScreenshotStamp;
+import com.forgebingo.core.ScreenshotEncode;
 import com.forgebingo.core.WindowShot;
 import com.forgebingo.core.SourceClassifier;
 import com.forgebingo.core.TileInfo;
@@ -1362,8 +1363,8 @@ public class ForgeBingoPlugin extends Plugin
                 String kw = cb != null && cb.event != null ? cb.event.keyword : null;
                 java.time.ZonedDateTime taken = java.time.ZonedDateTime.now();
                 img = ScreenshotStamp.stamp(img, kw, taken);
-                ByteArrayOutputStream out = new ByteArrayOutputStream();
-                if (!ImageIO.write(img, "png", out)) return;
+                byte[] shot = ScreenshotEncode.jpeg(img, ApiClient.MAX_SCREENSHOT_BYTES);
+                if (shot == null) return;
                 long now = System.currentTimeMillis();
                 screenshots.values().removeIf(s -> now - s.at > SCREENSHOT_TTL_MILLIS);
                 // full: drop the oldest instead of skipping this one (the newest drop is the likeliest to count)
@@ -1375,7 +1376,7 @@ public class ForgeBingoPlugin extends Plugin
                     if (oldest == null) break;
                     screenshots.remove(oldest);
                 }
-                screenshots.put(eventId, new Screenshot(out.toByteArray(), now, kw, taken.withZoneSameInstant(java.time.ZoneOffset.UTC).toInstant().toString()));
+                screenshots.put(eventId, new Screenshot(shot, now, kw, taken.withZoneSameInstant(java.time.ZoneOffset.UTC).toInstant().toString()));
             }
             catch (Exception ex)
             {
@@ -1419,9 +1420,9 @@ public class ForgeBingoPlugin extends Plugin
                 String kw = cb != null && cb.event != null ? cb.event.keyword : null;
                 java.time.ZonedDateTime taken = java.time.ZonedDateTime.now();
                 img = ScreenshotStamp.stamp(img, kw, taken);
-                ByteArrayOutputStream out = new ByteArrayOutputStream();
-                if (!ImageIO.write(img, "png", out)) return;
-                ApiResult<ApiModels.ProofResponse> r = a.uploadTaskScreenshot(team, taskId, out.toByteArray(), kw,
+                byte[] shot = ScreenshotEncode.jpeg(img, ApiClient.MAX_SCREENSHOT_BYTES);
+                if (shot == null) return;
+                ApiResult<ApiModels.ProofResponse> r = a.uploadTaskScreenshot(team, taskId, shot, kw,
                     taken.withZoneSameInstant(java.time.ZoneOffset.UTC).toInstant().toString(), what);
                 if (r.ok())
                 {

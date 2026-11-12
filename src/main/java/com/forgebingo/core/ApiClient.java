@@ -27,6 +27,8 @@ public final class ApiClient
     public static final int MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024;
 
     private final OkHttpClient http;
+    /** same client with longer timeouts, for screenshot uploads only (a slow upload used to time out) */
+    private final OkHttpClient uploadHttp;
     private final Gson gson;
     private final Supplier<String> baseUrl;
     private final Supplier<String> apiKey;
@@ -37,6 +39,8 @@ public final class ApiClient
         // no redirects: OkHttp keeps custom headers (X-API-Key) on a redirect to another host, so a redirecting
         // server or proxy could collect the key
         this.http = http.newBuilder().followRedirects(false).followSslRedirects(false).build();
+        this.uploadHttp = this.http.newBuilder().writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS).callTimeout(90, java.util.concurrent.TimeUnit.SECONDS).build();
         this.gson = gson;
         this.baseUrl = baseUrl;
         this.apiKey = apiKey;
@@ -180,9 +184,12 @@ public final class ApiClient
         addLabel(mb, label);
         if (stampKeyword != null && !stampKeyword.isEmpty()) mb.addFormDataPart("stampKeyword", stampKeyword.length() > 40 ? stampKeyword.substring(0, 40) : stampKeyword);
         if (capturedAt != null && !capturedAt.isEmpty()) mb.addFormDataPart("capturedAt", capturedAt.length() > 40 ? capturedAt.substring(0, 40) : capturedAt);
-        RequestBody body = mb.addFormDataPart("file", "proof.png", RequestBody.create(MediaType.parse("image/png"), png)).build();
-        return execute(builder(url("v1", "boards", teamBoardId, "proofs")).post(body).build(), ApiModels.ProofResponse.class);
+        RequestBody body = mb.addFormDataPart("file", fileName(png), RequestBody.create(MediaType.parse(mime(png)), png)).build();
+        return execute(uploadHttp, builder(url("v1", "boards", teamBoardId, "proofs")).post(body).build(), ApiModels.ProofResponse.class);
     }
+
+    private static String fileName(byte[] b) { return ScreenshotEncode.isJpeg(b) ? "proof.jpg" : "proof.png"; }
+    private static String mime(byte[] b) { return ScreenshotEncode.isJpeg(b) ? "image/jpeg" : "image/png"; }
 
     /** POST /v1/boards/{team}/proofs with a taskId: a new pending submission for that task with this screenshot. */
     public ApiResult<ApiModels.ProofResponse> uploadTaskScreenshot(String teamBoardId, String taskId, byte[] png, String stampKeyword, String capturedAt, String label)
@@ -195,8 +202,8 @@ public final class ApiClient
         addLabel(mb, label);
         if (stampKeyword != null && !stampKeyword.isEmpty()) mb.addFormDataPart("stampKeyword", stampKeyword.length() > 40 ? stampKeyword.substring(0, 40) : stampKeyword);
         if (capturedAt != null && !capturedAt.isEmpty()) mb.addFormDataPart("capturedAt", capturedAt.length() > 40 ? capturedAt.substring(0, 40) : capturedAt);
-        RequestBody body = mb.addFormDataPart("file", "proof.png", RequestBody.create(MediaType.parse("image/png"), png)).build();
-        return execute(builder(url("v1", "boards", teamBoardId, "proofs")).post(body).build(), ApiModels.ProofResponse.class);
+        RequestBody body = mb.addFormDataPart("file", fileName(png), RequestBody.create(MediaType.parse(mime(png)), png)).build();
+        return execute(uploadHttp, builder(url("v1", "boards", teamBoardId, "proofs")).post(body).build(), ApiModels.ProofResponse.class);
     }
 
     /** The task name the server uses for the file name (letters, digits and spaces only, at most 60). */
@@ -278,7 +285,12 @@ public final class ApiClient
 
     private <T> ApiResult<T> execute(Request request, Class<T> type)
     {
-        try (Response r = http.newCall(request).execute())
+        return execute(http, request, type);
+    }
+
+    private <T> ApiResult<T> execute(OkHttpClient client, Request request, Class<T> type)
+    {
+        try (Response r = client.newCall(request).execute())
         {
             long retryAfter = Backoff.parseRetryAfterMillis(r.header("Retry-After"));
             String etag = r.header("ETag");
