@@ -971,6 +971,8 @@ public class ForgeBingoPlugin extends Plugin
         if (recordType.equals("NPC")) return;
         // Wilderness loot key chests never count (they return other players' items)
         if (SourceClassifier.ignored(e.getName())) return;
+        // The Fractured Archive's chests are read straight from the loot window (onWidgetLoaded): both of them
+        if (ARCHIVE_LOOT_NAME.equalsIgnoreCase(e.getName())) return;
         if (recordType.equals("PICKPOCKET"))
         {
             // Pickpocketing (e.g. a Blood shard from a Vyre): sent only when the loot holds an item the board's
@@ -1294,9 +1296,45 @@ public class ForgeBingoPlugin extends Plugin
         }
     }
 
+    /** what RuneLite's loot tracker calls The Fractured Archive's chest loot (it reports only the first chest opened) */
+    private static final String ARCHIVE_LOOT_NAME = "Fractured Archive";
+    private final com.forgebingo.core.ChestOpens archiveChests = new com.forgebingo.core.ChestOpens();
+    private boolean wasInstance;
+
+    /**
+     * The Fractured Archive has two reward chests: the standard one, and a second for whoever rolled the unique
+     * (owner, 2026-11-13). Each one opened sends its own loot with the loot window as proof.
+     */
+    @Subscribe
+    public void onWidgetLoaded(net.runelite.api.events.WidgetLoaded e)
+    {
+        if (e.getGroupId() != net.runelite.api.gameval.InterfaceID.TFA_CHESTS) return;
+        ItemContainer c = client.getItemContainer(net.runelite.api.gameval.InventoryID.TFA_CHESTS);
+        if (c == null) return;
+        Map<Integer, Integer> contents = new java.util.LinkedHashMap<>();
+        for (net.runelite.api.Item i : c.getItems())
+        {
+            if (i == null || i.getId() <= 0 || i.getQuantity() < 1) continue;
+            contents.merge(itemManager.canonicalize(i.getId()), i.getQuantity(), Integer::sum);
+        }
+        Map<Integer, Integer> fresh = archiveChests.opened(contents);
+        if (fresh.isEmpty()) return;
+        petDetector.onSource(ARCHIVE_LOOT_NAME, client.getTickCount());
+        if (!config.sendChestLoot()) return;
+        GameEvent ev = base(GameEvent.RAID_CHEST);
+        ev.sourceName = ARCHIVE_LOOT_NAME;
+        for (Map.Entry<Integer, Integer> f : fresh.entrySet())
+        {
+            ev.addItem(f.getKey(), f.getValue());
+            activityWatcher.onLoot(f.getKey(), client.getTickCount());
+        }
+        submit(ev, true, true);
+    }
+
     @Subscribe
     public void onGameStateChanged(GameStateChanged e)
     {
+        if (e.getGameState() == GameState.LOGIN_SCREEN || e.getGameState() == GameState.HOPPING) archiveChests.reset();
         // logging out or hopping closes the board (map LOADING does not; the input ignores clicks until LOGGED_IN)
         if (e.getGameState() == GameState.LOGIN_SCREEN || e.getGameState() == GameState.HOPPING || e.getGameState() == GameState.CONNECTION_LOST) boardOverlay.close();
         if (e.getGameState() == GameState.LOGIN_SCREEN || e.getGameState() == GameState.HOPPING) requestWomUpdate();
@@ -1317,6 +1355,13 @@ public class ForgeBingoPlugin extends Plugin
     public void onGameTick(GameTick e)
     {
         int tick = client.getTickCount();
+        // leaving (or entering) a raid's instance: the next Archive chests belong to another raid
+        boolean instance = client.getTopLevelWorldView() != null && client.getTopLevelWorldView().isInstance();
+        if (instance != wasInstance)
+        {
+            wasInstance = instance;
+            archiveChests.reset();
+        }
         maybeHello();
         if (petDetector.wantsFollower())
         {
