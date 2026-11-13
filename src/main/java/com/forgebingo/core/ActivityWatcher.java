@@ -123,7 +123,8 @@ public final class ActivityWatcher
             }
             out.add(new Drop(p.itemId, p.quantity, p.activity));
         }
-        prune(lootSeen, tick);
+        // kept for the whole loot window: a chest's loot may be claimed minutes after the chest reported it
+        lootSeen.values().removeIf(t -> t < tick - LOOT_WINDOW);
         prune(leftContainer, tick);
         prune(pickedUp, tick);
         transformTicks.removeIf(t -> t < tick - KEEP);

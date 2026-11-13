@@ -51,6 +51,8 @@ public final class GameEvent
     public String accountHash;
     /** npc */
     public Integer npcId;
+    /** which NPC in the scene dropped it (never sent or saved): keeps two same-tick kills with the same loot apart */
+    public transient Integer npcIndex;
     public String npcName;
     /** raid_chest / clue (tier) / kc (boss or raid name). */
     public String sourceName;

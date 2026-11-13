@@ -91,8 +91,10 @@ public final class ApiModels
         @Override
         public String toString()
         {
+            // shown in a Swing list, which renders text starting with <html> as HTML: never let a name do that
             String e = eventName == null ? "(unnamed)" : eventName;
-            return teamName == null ? e : e + " - " + teamName;
+            String s = teamName == null ? e : e + " - " + teamName;
+            return s.replace('<', '(').replace('>', ')');
         }
     }
 

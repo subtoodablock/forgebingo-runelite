@@ -271,6 +271,12 @@ public class ForgeBingoPlugin extends Plugin
         celebrated.clear();
         blackoutShown.clear();
         currentBoard = null;
+        boardVersions.clear(); // or the next start would think the board is already loaded and never show it
+        knownBoards = null;
+        helloEvents = null;
+        archiveChests.reset();
+        wasInstance = false;
+        raidShot = null;
         if (navigationButton != null) clientToolbar.removeNavigation(navigationButton);
         navigationButton = null;
         ForgeBingoPanel closing = panel;
@@ -509,8 +515,7 @@ public class ForgeBingoPlugin extends Plugin
                 byte[] bytes = a == null ? null : a.icon(proxyPath);
                 if (bytes != null)
                 {
-                    BufferedImage read = ImageIO.read(new java.io.ByteArrayInputStream(bytes));
-                    if (read != null && read.getWidth() <= 256 && read.getHeight() <= 256) got = read;
+                    got = readSmallImage(bytes);
                 }
             }
             catch (java.io.IOException | RuntimeException ex)
@@ -947,6 +952,7 @@ public class ForgeBingoPlugin extends Plugin
         GameEvent ev = base(GameEvent.NPC);
         petDetector.onSource(npc.getName(), client.getTickCount());
         ev.npcId = npc.getId();
+        ev.npcIndex = npc.getIndex();
         ev.npcName = npc.getName();
         addItems(ev, e.getItems());
         submit(ev, true);
@@ -1087,7 +1093,8 @@ public class ForgeBingoPlugin extends Plugin
         String type = e.getType() == null ? "" : e.getType().name();
         String msg = e.getMessage();
         int tick = client.getTickCount();
-        watchSpecialLoot(msg, tick);
+        // only lines the game itself writes: a player typing the same words in chat must not set this off
+        if (type.equals("GAMEMESSAGE") || type.equals("FRIENDSCHATNOTIFICATION") || type.equals("SPAM")) watchSpecialLoot(msg, tick);
         if (type.equals("CLAN_MESSAGE") || type.equals("CLAN_GIM_MESSAGE") || type.equals("FRIENDSCHATNOTIFICATION"))
         {
             // Clan pet broadcasts are the only line that names a duplicate pet. Only our own.
@@ -1296,10 +1303,36 @@ public class ForgeBingoPlugin extends Plugin
         }
     }
 
+    /**
+     * Decodes a tile icon only after its header says it is small: a tiny file can claim a huge picture, and decoding
+     * that would use up the client's memory.
+     */
+    private static BufferedImage readSmallImage(byte[] bytes) throws java.io.IOException
+    {
+        try (javax.imageio.stream.ImageInputStream in = ImageIO.createImageInputStream(new java.io.ByteArrayInputStream(bytes)))
+        {
+            if (in == null) return null;
+            java.util.Iterator<javax.imageio.ImageReader> readers = ImageIO.getImageReaders(in);
+            if (!readers.hasNext()) return null;
+            javax.imageio.ImageReader reader = readers.next();
+            try
+            {
+                reader.setInput(in, true, true);
+                if (reader.getWidth(0) > 256 || reader.getHeight(0) > 256) return null;
+                return reader.read(0);
+            }
+            finally
+            {
+                reader.dispose();
+            }
+        }
+    }
+
     /** what RuneLite's loot tracker calls The Fractured Archive's chest loot (it reports only the first chest opened) */
     private static final String ARCHIVE_LOOT_NAME = "Fractured Archive";
     private final com.forgebingo.core.ChestOpens archiveChests = new com.forgebingo.core.ChestOpens();
     private boolean wasInstance;
+    private boolean freshLogin = true;
 
     /**
      * The Fractured Archive has two reward chests: the standard one, and a second for whoever rolled the unique
@@ -1338,8 +1371,11 @@ public class ForgeBingoPlugin extends Plugin
         // logging out or hopping closes the board (map LOADING does not; the input ignores clicks until LOGGED_IN)
         if (e.getGameState() == GameState.LOGIN_SCREEN || e.getGameState() == GameState.HOPPING || e.getGameState() == GameState.CONNECTION_LOST) boardOverlay.close();
         if (e.getGameState() == GameState.LOGIN_SCREEN || e.getGameState() == GameState.HOPPING) requestWomUpdate();
-        if (e.getGameState() == GameState.LOGGED_IN)
+        // LOGGED_IN also follows every map load: only a real login (or hop) needs the account verified again
+        if (e.getGameState() == GameState.LOGIN_SCREEN || e.getGameState() == GameState.HOPPING || e.getGameState() == GameState.LOGGING_IN) freshLogin = true;
+        if (e.getGameState() == GameState.LOGGED_IN && freshLogin)
         {
+            freshLogin = false;
             helloPending = true; // another account may have logged in: verify again
             helloNotBefore = 0;
         }
@@ -1651,13 +1687,21 @@ public class ForgeBingoPlugin extends Plugin
             notice("Connect the plugin to your team first.", true);
             return;
         }
-        if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen())
+        // the bank PIN is checked below, on the client thread, as the frame is captured (this runs on the UI thread)
+        if (client.getGameState() != GameState.LOGGED_IN)
         {
-            notice("Log in (and close the bank PIN) to take a screenshot.", true);
+            notice("Log in to take a screenshot.", true);
             return;
         }
         lastProofShotAt = System.currentTimeMillis();
         drawManager.requestNextFrameListener(image -> {
+            // checked again as the frame is captured: a logout or the bank PIN may have come up since the click
+            if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen())
+            {
+                lastProofShotAt = 0;
+                notice("Close the bank PIN to take a screenshot.", true);
+                return;
+            }
             // read the player's name here, on the client thread, as the frame is captured
             String player = client.getLocalPlayer() == null ? null : client.getLocalPlayer().getName();
             executor.execute(() -> {
@@ -1826,7 +1870,9 @@ public class ForgeBingoPlugin extends Plugin
             try
             {
                 // that team's own board: its bingo's code word and the names of the tiles the drop counted for
-                ApiResult<ApiModels.BoardResponse> br = api.board(t.getKey());
+                ApiClient a = api;
+                if (a == null) return; // the plugin was switched off meanwhile
+                ApiResult<ApiModels.BoardResponse> br = a.board(t.getKey());
                 ApiModels.BoardResponse tb = br.ok() ? br.body : null;
                 String kw = tb != null && tb.event != null ? tb.event.keyword : null;
                 List<String> names = new ArrayList<>();

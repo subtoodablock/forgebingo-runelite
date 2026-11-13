@@ -42,7 +42,7 @@ public final class EventDeduplicator
     public static String signature(GameEvent e, int tick)
     {
         StringBuilder sb = new StringBuilder();
-        sb.append(e.sourceType).append('|').append(e.sourceName).append('|').append(e.npcId)
+        sb.append(e.sourceType).append('|').append(e.sourceName).append('|').append(e.npcId).append('#').append(e.npcIndex)
             .append('|').append(e.skill).append('|').append(e.level).append('|').append(tick);
         if (e.items != null)
         {
