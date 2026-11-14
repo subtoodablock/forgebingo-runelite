@@ -35,8 +35,9 @@ This plugin sends data to the ForgeBingo server (a third-party service, not run 
 - the drops, loot, collection log slots, pets, kill counts and levels listed above, with the time they happened
 - a screenshot of the game window as proof, only after the server confirms a drop counts for your team. This is
   always sent and cannot be turned off, so event organizers can rely on it. The screenshot may show your chat box.
-  Screenshots are never taken while the bank PIN keypad is open or while you are logged out, and the sidebar is only
-  included if you turn on **Include sidebar in screenshots**
+  Screenshots are never taken while the bank PIN keypad is open or while you are logged out, and while the ForgeBingo panel
+  is open the sidebar is included too, unless you turn off **Include sidebar in screenshots** (other plugins' panels
+  are never captured)
 
 It never sees your password, bank PIN or authenticator, and it never reads private messages or what you type.
 Turn off any event type under **Events to send**. Revoke your key on the website at any time.
@@ -52,7 +53,7 @@ you don't walk where you click; it closes by itself when a monster attacks you (
 
 - **Connection:** API base URL (leave as default), API key
 - **Events to send:** NPC drops; raids, chests and clues; collection log slots; pets; kill counts; level-ups
-- **Screenshots:** include sidebar in screenshots (off). A screenshot is always sent with a matched drop
+- **Screenshots:** include sidebar in screenshots (on). A screenshot is always sent with a matched drop
 - **Celebrations** and **chat notices**
 - **Board overlay:** hotkey, close when attacked, animations
 - **Side panel:** font (clean or RuneScape), animations (on), imps that wander over the panel (on),

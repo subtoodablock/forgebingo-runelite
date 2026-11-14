@@ -1002,6 +1002,9 @@ class ForgeBingoPanel extends PluginPanel
             box.add(gap(3));
             // automatic tasks need no explanation (owner, 2026-11-12); only manual ones say how to prove them
             if (k.sourceType == null || "manual".equals(k.sourceType)) box.add(left(cardText(trackingText(k), MUTED, CARD_TEXT - 44)));
+        }
+        // the button stays on a finished task too (owner, 2026-11-14): proof can still be sent after it is complete
+        {
             if (!secret && k.id != null)
             {
                 // RuneLite sends its own proof: a game screenshot straight to this task, waiting for review
