@@ -361,6 +361,10 @@ class ForgeBingoPanel extends PluginPanel
         activityLabel.setForeground(GOOD);
         activityLabel.setVisible(false);
         boardCard.add(left(activityLabel));
+        reviewLabel.setFont(smallFont());
+        reviewLabel.setForeground(WAIT);
+        reviewLabel.setVisible(false);
+        boardCard.add(left(reviewLabel));
         boardCard.add(Box.createVerticalStrut(7));
         boardCard.add(fullWidth(tilesBar, 17));
         boardCard.setVisible(false);
@@ -433,6 +437,8 @@ class ForgeBingoPanel extends PluginPanel
     private boolean updatingLook;
     /** the newest thing that counted, as one quiet line under the team's name; the rest is in its tooltip */
     private final JLabel activityLabel = new PanelUi.CrispLabel(" ");
+    /** how much of the team's proof is waiting for a reviewer (player request, 2026-11-14) */
+    private final JLabel reviewLabel = new PanelUi.CrispLabel(" ");
 
     /** The Theme or Effects setting changed somewhere else: show it in the pickers without firing them. */
     void showLook(PanelTheme theme, ForgeBingoConfig.PanelEffects effects)
@@ -672,6 +678,19 @@ class ForgeBingoPanel extends PluginPanel
         tilesBar.setValue(done);
         tilesBar.setString(blackout ? "BLACKOUT! " + done + " / " + total : done + " / " + total + " tiles done");
         tilesBar.setForeground(blackout ? PanelUi.GREEN_DARK : PanelUi.GOLD_DARK);
+        // what is waiting for a reviewer, across the whole board: a screenshot just sent shows up here
+        int waitingTasks = 0;
+        for (ApiModels.Tile t : board.tiles)
+        {
+            if (t == null || t.tasks == null) continue;
+            for (ApiModels.Task k : t.tasks) if (k != null && k.pendingQty > 0) waitingTasks++;
+        }
+        reviewLabel.setVisible(waitingTasks > 0);
+        if (waitingTasks > 0)
+        {
+            reviewLabel.setText(wrapHtml("Being reviewed: " + waitingTasks + (waitingTasks == 1 ? " task" : " tasks") + " waiting", CARD_TEXT));
+            reviewLabel.setToolTipText("Proof for " + (waitingTasks == 1 ? "this task" : "these tasks") + " is with the reviewers. It counts once they approve it.");
+        }
         boardCard.setVisible(true);
 
         tileLabels.clear();
