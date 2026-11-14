@@ -269,6 +269,7 @@ final class ThemeFx
         for (int[] p : plats)
         {
             if (p[1] - p[0] < 80 || p[2] < view.y + 26 || p[2] > view.y + view.height - 8) continue;
+            if (p.length < 4 || p[3] != 1) continue; // only where it will not sit on a heading or a button
             ok.add(p);
         }
         if (ok.isEmpty()) return;

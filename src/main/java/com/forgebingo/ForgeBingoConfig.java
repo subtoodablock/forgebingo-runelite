@@ -143,6 +143,27 @@ public interface ForgeBingoConfig extends Config
 
     Color DEFAULT_CHAT_COLOR = new Color(0x0dc10d);
 
+    /** How much moves in the side panel (owner, 2026-11-14). */
+    enum PanelEffects
+    {
+        FULL("Effects: Full"),
+        CALM("Effects: Calm"),
+        OFF("Effects: Off");
+
+        private final String label;
+
+        PanelEffects(String label)
+        {
+            this.label = label;
+        }
+
+        @Override
+        public String toString()
+        {
+            return label;
+        }
+    }
+
     enum PanelFont
     {
         CLEAN("Clean"),
@@ -176,6 +197,14 @@ public interface ForgeBingoConfig extends Config
     default PanelTheme panelTheme()
     {
         return PanelTheme.CLASSIC;
+    }
+
+    @ConfigItem(keyName = "panelEffects", name = "Theme effects",
+        description = "Full: everything the theme has. Calm: the creatures and still decorations only, drawn at half speed (lighter on a slow PC). Off: the theme's colours and nothing else.",
+        position = 5)
+    default PanelEffects panelEffects()
+    {
+        return PanelEffects.FULL;
     }
 
     @ConfigItem(keyName = "panelFont", name = "Side panel font",

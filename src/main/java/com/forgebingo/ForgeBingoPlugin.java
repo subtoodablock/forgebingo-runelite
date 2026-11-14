@@ -98,7 +98,7 @@ import okhttp3.OkHttpClient;
 @Slf4j
 public class ForgeBingoPlugin extends Plugin
 {
-    static final String VERSION = "2.0.0";
+    static final String VERSION = "2.1.0";
     private static final long BOARD_POLL_SECONDS = 8;
     /** spot animation id of the level-up fireworks (the one the game plays at 99) */
     private static final int LEVEL_UP_FIREWORKS = 199;
@@ -235,9 +235,9 @@ public class ForgeBingoPlugin extends Plugin
             ForgeBingoPanel.usePixelFonts(config.panelFont() == ForgeBingoConfig.PanelFont.RUNESCAPE);
             PanelUi.animations = config.panelAnimations();
             ForgeBingoPanel.useTheme(config.panelTheme());
+            PanelUi.effects = config.panelEffects();
             panel = new ForgeBingoPanel(this, api);
-            panel.setImps(config.panelImps());
-            panel.setRain(config.panelRain());
+            applyEffects(panel);
             BufferedImage icon = ImageUtil.loadImageResource(getClass(), "icon.png");
             navigationButton = NavigationButton.builder()
                 .tooltip("ForgeBingo")
@@ -394,6 +394,41 @@ public class ForgeBingoPlugin extends Plugin
         });
     }
 
+    /**
+     * The "Theme effects" level on top of the creature and item-rain switches: Calm keeps the creatures (at half
+     * speed) and drops what falls and flows; Off leaves the colours only.
+     */
+    private void applyEffects(ForgeBingoPanel p)
+    {
+        ForgeBingoConfig.PanelEffects level = config.panelEffects();
+        p.setEffects(level);
+        p.setImps(config.panelImps() && level != ForgeBingoConfig.PanelEffects.OFF);
+        p.setRain(config.panelRain() && level == ForgeBingoConfig.PanelEffects.FULL);
+    }
+
+    /** The side panel's own theme picker. */
+    void choosePanelTheme(PanelTheme theme)
+    {
+        if (configManager != null && theme != null) configManager.setConfiguration(ForgeBingoConfig.GROUP, "panelTheme", theme);
+    }
+
+    /** The side panel's own effects picker. */
+    void choosePanelEffects(ForgeBingoConfig.PanelEffects level)
+    {
+        if (configManager != null && level != null) configManager.setConfiguration(ForgeBingoConfig.GROUP, "panelEffects", level);
+    }
+
+    /** the last few things that counted, shown as one line in the side panel */
+    private final com.forgebingo.core.ActivityLog activity = new com.forgebingo.core.ActivityLog();
+
+    private void showActivity()
+    {
+        long now = System.currentTimeMillis();
+        String newest = activity.newest(now);
+        List<String> lines = activity.lines(now);
+        notifyPanel(p -> p.setActivity(newest, lines));
+    }
+
     /** Client thread: once logged in, report the RSN + account hash (POST /v1/hello) so the server can verify the name. */
     private void maybeHello()
     {
@@ -446,7 +481,13 @@ public class ForgeBingoPlugin extends Plugin
         ApiResult<ApiModels.HelloResponse> r = a.hello(rsn, accountHash);
         if (r.ok() && r.body != null)
         {
-            List<ConnectionStatus.Line> lines = ConnectionStatus.fromHello(r.body);
+            List<ConnectionStatus.Line> lines = new ArrayList<>(ConnectionStatus.fromHello(r.body));
+            // the server knows the newest version players can get: say so when this one is behind
+            if (com.forgebingo.core.Versions.newer(r.body.latestPluginVersion, VERSION))
+            {
+                lines.add(new ConnectionStatus.Line(ConnectionStatus.Level.WARNING,
+                    "A newer ForgeBingo plugin is out (" + r.body.latestPluginVersion + ", you have " + VERSION + "). Restart RuneLite to update."));
+            }
             notifyPanel(p -> p.setIdentity(lines));
             // Logging in can put the player on a team (the organizer listed their RSN): fetch the boards straight
             // away when the server reports a bingo we did not know about, so the new board shows without a wait.
@@ -638,21 +679,34 @@ public class ForgeBingoPlugin extends Plugin
         if ("panelTheme".equals(e.getKey()))
         {
             PanelTheme theme = config.panelTheme();
+            ForgeBingoConfig.PanelEffects level = config.panelEffects();
             ForgeBingoPanel p = panel;
-            if (p != null) javax.swing.SwingUtilities.invokeLater(() -> p.setTheme(theme));
+            if (p != null) javax.swing.SwingUtilities.invokeLater(() -> {
+                p.setTheme(theme);
+                p.showLook(theme, level);
+            });
             else ForgeBingoPanel.useTheme(theme);
+            return;
+        }
+        if ("panelEffects".equals(e.getKey()))
+        {
+            PanelTheme theme = config.panelTheme();
+            ForgeBingoConfig.PanelEffects level = config.panelEffects();
+            ForgeBingoPanel p = panel;
+            if (p != null) javax.swing.SwingUtilities.invokeLater(() -> {
+                applyEffects(p);
+                p.showLook(theme, level);
+            });
+            else PanelUi.effects = level;
             return;
         }
         if ("panelAnimations".equals(e.getKey()) || "panelImps".equals(e.getKey()) || "panelRain".equals(e.getKey()))
         {
             boolean animate = config.panelAnimations();
-            boolean imps = config.panelImps();
-            boolean rain = config.panelRain();
             ForgeBingoPanel p = panel;
             if (p != null) javax.swing.SwingUtilities.invokeLater(() -> {
                 p.setAnimations(animate);
-                p.setImps(imps);
-                p.setRain(rain);
+                applyEffects(p);
             });
             return;
         }
@@ -1957,6 +2011,11 @@ public class ForgeBingoPlugin extends Plugin
                 {
                     notice("Screenshot upload failed: " + r.describe(), true);
                 }
+                else
+                {
+                    activity.pictureSent(event.id);
+                    showActivity();
+                }
             }
             catch (java.io.IOException ex)
             {
@@ -2038,6 +2097,22 @@ public class ForgeBingoPlugin extends Plugin
                             taskNames.put(k.id, k.description);
                         }
                     }
+                }
+                // one quiet line in the side panel: what just counted
+                java.util.Set<String> counted = new java.util.LinkedHashSet<>();
+                for (ApiModels.Match m : result.matched)
+                {
+                    if (m == null) continue;
+                    String n = m.taskId == null ? null : taskNames.get(m.taskId);
+                    if (n == null || n.isEmpty()) n = m.tileId == null ? null : tileTitles.get(m.tileId);
+                    if (n != null && !n.isEmpty()) counted.add(n);
+                }
+                if (!counted.isEmpty())
+                {
+                    List<String> names = new ArrayList<>(counted);
+                    String what = names.size() <= 2 ? String.join(", ", names) : names.get(0) + ", " + names.get(1) + " +" + (names.size() - 2);
+                    activity.counted(event.id, what, System.currentTimeMillis());
+                    showActivity();
                 }
                 // a match's "completed" is its TASK; the tile is finished when matchedTiles says so
                 java.util.Set<String> tileNowDone = new java.util.HashSet<>();

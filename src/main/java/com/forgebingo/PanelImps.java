@@ -128,7 +128,7 @@ final class PanelImps extends LayerUI<JComponent>
 
     private boolean fxOn()
     {
-        return ThemeFx.moving(theme) && PanelUi.animations;
+        return ThemeFx.moving(theme) && PanelUi.animations && PanelUi.effects == ForgeBingoConfig.PanelEffects.FULL;
     }
 
     /** The "Theme" setting changed: everyone leaves and the new cast drops in. */
@@ -253,6 +253,12 @@ final class PanelImps extends LayerUI<JComponent>
         held = null;
         layer = null;
         super.uninstallUI(c);
+    }
+
+    /** Calm draws at half speed (about 15 frames a second); Full at about 30. */
+    void setCalm(boolean calm)
+    {
+        timer.setDelay(calm ? 66 : 33);
     }
 
     void setEnabled(boolean on)
@@ -522,10 +528,36 @@ final class PanelImps extends LayerUI<JComponent>
                 Rectangle r = SwingUtilities.convertRectangle(parent, c.getBounds(), root);
                 int l = Math.max(r.x, 6);
                 int rr = Math.min(r.x + r.width, vw - 6);
-                if (rr - l >= 30 && r.height >= 8 && r.y >= 14) plats.add(new int[] {l, rr, r.y});
+                // the fourth number says whether a still prop may stand here: only on a card, and not right under
+                // buttons or a drop-down, whose text it would cover
+                int still = c instanceof PanelUi.Card && !controlAbove(parent, c) ? 1 : 0;
+                if (rr - l >= 30 && r.height >= 8 && r.y >= 14) plats.add(new int[] {l, rr, r.y, still});
             }
             if (c instanceof Container) collect(root, (Container) c, vw, depth + 1);
         }
+    }
+
+    /** Is the thing sitting just above this component (in the same column) a button or drop-down, or holding one? */
+    private static boolean controlAbove(Container parent, Component c)
+    {
+        Component above = null;
+        for (Component k : parent.getComponents())
+        {
+            if (k == c || !k.isVisible() || k.getHeight() < 12) continue;
+            int bottom = k.getY() + k.getHeight();
+            if (bottom <= c.getY() + 2 && (above == null || bottom > above.getY() + above.getHeight())) above = k;
+        }
+        // first in its own group: look at what is above the group instead
+        if (above == null) return parent.getParent() != null && c.getY() < 30 && controlAbove(parent.getParent(), parent);
+        return c.getY() - (above.getY() + above.getHeight()) < 30 && holdsControl(above, 0);
+    }
+
+    private static boolean holdsControl(Component c, int depth)
+    {
+        if (c instanceof javax.swing.AbstractButton || c instanceof javax.swing.JComboBox) return true;
+        if (depth > 4 || !(c instanceof Container)) return false;
+        for (Component k : ((Container) c).getComponents()) if (k.isVisible() && holdsControl(k, depth + 1)) return true;
+        return false;
     }
 
     private int[] support(float x, float y)

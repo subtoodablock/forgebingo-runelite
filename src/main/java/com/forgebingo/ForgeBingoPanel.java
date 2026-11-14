@@ -290,6 +290,27 @@ class ForgeBingoPanel extends PluginPanel
         queueLabel.setFont(smallFont());
         queueLabel.setForeground(MUTED);
         head.add(left(queueLabel));
+        // the look, picked right here instead of deep in RuneLite's settings (owner, 2026-11-14)
+        themeBox.setFont(smallFont());
+        effectsBox.setFont(smallFont());
+        themeBox.setToolTipText("Theme: the plugin's colours, creatures and effects");
+        effectsBox.setToolTipText("Full: everything. Calm: lighter on a slow PC. Off: colours only.");
+        themeBox.setSelectedItem(PanelUi.theme);
+        effectsBox.setSelectedItem(PanelUi.effects);
+        themeBox.addActionListener(e -> {
+            if (!updatingLook && themeBox.getSelectedItem() instanceof PanelTheme) plugin.choosePanelTheme((PanelTheme) themeBox.getSelectedItem());
+        });
+        effectsBox.addActionListener(e -> {
+            if (!updatingLook && effectsBox.getSelectedItem() instanceof ForgeBingoConfig.PanelEffects)
+            {
+                plugin.choosePanelEffects((ForgeBingoConfig.PanelEffects) effectsBox.getSelectedItem());
+            }
+        });
+        lookRow.setOpaque(false);
+        lookRow.add(themeBox);
+        lookRow.add(effectsBox);
+        head.add(lookGap);
+        head.add(fullWidth(lookRow, 52));
         add(content, head);
 
         identity.add(message("Log in to the game so we can check which character you're playing.", ConnectionStatus.Level.INFO));
@@ -336,6 +357,10 @@ class ForgeBingoPanel extends PluginPanel
         tilesBar.setForeground(PanelUi.GOLD_DARK);
         boardCard.add(left(teamLabel));
         boardCard.add(left(eventLabel));
+        activityLabel.setFont(smallFont());
+        activityLabel.setForeground(GOOD);
+        activityLabel.setVisible(false);
+        boardCard.add(left(activityLabel));
         boardCard.add(Box.createVerticalStrut(7));
         boardCard.add(fullWidth(tilesBar, 17));
         boardCard.setVisible(false);
@@ -401,6 +426,57 @@ class ForgeBingoPanel extends PluginPanel
     }
 
     private final JLabel headToggle = new PanelUi.CrispLabel("Hide");
+    private final JComboBox<PanelTheme> themeBox = new JComboBox<>(PanelTheme.values());
+    private final JComboBox<ForgeBingoConfig.PanelEffects> effectsBox = new JComboBox<>(ForgeBingoConfig.PanelEffects.values());
+    private final JPanel lookRow = new JPanel(new java.awt.GridLayout(2, 1, 0, 4));
+    private final Component lookGap = Box.createVerticalStrut(6);
+    private boolean updatingLook;
+    /** the newest thing that counted, as one quiet line under the team's name; the rest is in its tooltip */
+    private final JLabel activityLabel = new PanelUi.CrispLabel(" ");
+
+    /** The Theme or Effects setting changed somewhere else: show it in the pickers without firing them. */
+    void showLook(PanelTheme theme, ForgeBingoConfig.PanelEffects effects)
+    {
+        updatingLook = true;
+        try
+        {
+            themeBox.setSelectedItem(theme);
+            effectsBox.setSelectedItem(effects);
+        }
+        finally
+        {
+            updatingLook = false;
+        }
+    }
+
+    /** How much of the theme moves (the "Theme effects" setting). */
+    void setEffects(ForgeBingoConfig.PanelEffects level)
+    {
+        PanelUi.effects = level == null ? ForgeBingoConfig.PanelEffects.FULL : level;
+        imps.setCalm(PanelUi.effects == ForgeBingoConfig.PanelEffects.CALM);
+        repaint();
+    }
+
+    /**
+     * The newest thing that counted (null hides the line) and the last few as the tooltip's lines. One line only,
+     * so the panel stays tidy.
+     */
+    void setActivity(String newest, List<String> recent)
+    {
+        if (newest == null || newest.isEmpty())
+        {
+            activityLabel.setVisible(false);
+            return;
+        }
+        activityLabel.setText(wrapHtml(newest, CARD_TEXT));
+        StringBuilder tip = new StringBuilder("<html><b>Recently counted</b>");
+        if (recent != null) for (String line : recent) tip.append("<br>").append(esc(line));
+        activityLabel.setToolTipText(tip.append("</html>").toString());
+        activityLabel.setVisible(true);
+        revalidate();
+        repaint();
+    }
+
     private final Component identityGap = gap(6);
     private boolean headerCollapsed;
 
@@ -411,6 +487,8 @@ class ForgeBingoPanel extends PluginPanel
         headToggle.setText(collapsed ? "Show" : "Hide");
         scope.setVisible(!collapsed);
         queueLabel.setVisible(!collapsed);
+        lookRow.setVisible(!collapsed);
+        lookGap.setVisible(!collapsed);
         identity.setVisible(!collapsed);
         identityGap.setVisible(!collapsed);
         revalidate();
@@ -1490,7 +1568,7 @@ class ForgeBingoPanel extends PluginPanel
         protected void paintComponent(java.awt.Graphics g)
         {
             super.paintComponent(g);
-            if (PanelUi.theme == PanelTheme.INFERNO)
+            if (PanelUi.theme == PanelTheme.INFERNO && PanelUi.decorations())
             {
                 // the Inferno's rock is cracked with lava behind the cards
                 java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();

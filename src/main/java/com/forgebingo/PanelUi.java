@@ -57,6 +57,14 @@ final class PanelUi
     static Color TEXT = new Color(0xe6dfd3);
     static Color MUTED = new Color(0xa69d8f);
 
+    /** how much of the theme moves; Off also drops the still decorations (drips, crystals, lava cracks) */
+    static volatile ForgeBingoConfig.PanelEffects effects = ForgeBingoConfig.PanelEffects.FULL;
+
+    static boolean decorations()
+    {
+        return effects != ForgeBingoConfig.PanelEffects.OFF;
+    }
+
     /** the look in use; change it with {@link #applyTheme} */
     static volatile PanelTheme theme = PanelTheme.CLASSIC;
 
@@ -568,8 +576,8 @@ final class PanelUi
                         g2.drawLine(r, b, r, b - len);
                     }
                 }
-                if (theme.drips && !inset && h > 20) paintDrips(g2, w, h);
-                if (theme == PanelTheme.XERIC && h > 26)
+                if (theme.drips && !inset && h > 20 && decorations()) paintDrips(g2, w, h);
+                if (theme == PanelTheme.XERIC && h > 26 && decorations())
                 {
                     // crystals growing in the corners (Chambers of Xeric); the same card always grows the same ones
                     long seed = w * 131L + getY() * 17L + getX() + (inset ? 7 : 0);
@@ -763,7 +771,7 @@ final class PanelUi
                 }
                 g2.setColor(new Color(0, 0, 0, 110));
                 g2.draw(new RoundRectangle2D.Float(0.5f, 0.5f, w - 1f, h - 1f, arc, arc));
-                if (theme == PanelTheme.XERIC && h >= 12 && w > 80)
+                if (theme == PanelTheme.XERIC && h >= 12 && w > 80 && decorations())
                 {
                     // crystals growing at the end of the bar (Chambers of Xeric)
                     Shape old = g2.getClip();
@@ -959,7 +967,7 @@ final class PanelUi
                     g2.setPaint(new GradientPaint(x0, 0, alpha(GOLD, 150), getWidth(), 0, alpha(GOLD, 0)));
                     g2.fillRect(x0, ly, getWidth() - x0, 1);
                     // a few small crystals grow on the line (Chambers of Xeric)
-                    if (theme == PanelTheme.XERIC) ThemeFx.crystals(g2, text.hashCode(), x0 + 10 + Math.floorMod(text.hashCode(), 30), ly + 1, 10);
+                    if (theme == PanelTheme.XERIC && decorations()) ThemeFx.crystals(g2, text.hashCode(), x0 + 10 + Math.floorMod(text.hashCode(), 30), ly + 1, 10);
                 }
             }
             finally

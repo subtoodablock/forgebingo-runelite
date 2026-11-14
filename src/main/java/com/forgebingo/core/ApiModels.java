@@ -67,6 +67,8 @@ public final class ApiModels
         /** event | account */
         public String keyScope;
         public List<Membership> memberships;
+        /** the newest plugin version players can get (null from an older server) */
+        public String latestPluginVersion;
     }
 
     /** One entry of {@code GET /v1/boards}. {@code teamBoardId} equals the team id. */
