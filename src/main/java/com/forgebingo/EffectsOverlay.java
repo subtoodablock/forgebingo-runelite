@@ -293,7 +293,7 @@ public class EffectsOverlay extends Overlay
             g.setColor(new Color(0, 0, 0, 34));
             g.fillRoundRect(x - i, y - i + 3, tw + 2 * i, th + 2 * i, arc + 2 * i, arc + 2 * i);
         }
-        g.setPaint(new GradientPaint(0, y, mix(STONE_TOP, fill, 0.55), 0, y + th, mix(STONE_BOTTOM, fill, 0.25)));
+        g.setPaint(new GradientPaint(0, y, mix(PanelUi.theme == PanelTheme.CLASSIC ? STONE_TOP : PanelUi.lift(PanelUi.CARD_TOP, -8), fill, 0.55), 0, y + th, mix(PanelUi.theme == PanelTheme.CLASSIC ? STONE_BOTTOM : PanelUi.lift(PanelUi.INSET, -2), fill, 0.25)));
         g.fillRoundRect(x, y, tw, th, arc, arc);
         g.setStroke(new BasicStroke(1f));
         g.setColor(Color.BLACK);

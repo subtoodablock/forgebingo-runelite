@@ -75,24 +75,52 @@ public class BoardOverlay extends Overlay
     /** the most blur samples drawn behind one flying tile (fast tiles get more, so the trail stays continuous) */
     private static final int BLUR_MAX = 10;
 
-    private static final Color GOLD = PanelUi.GOLD;
-    private static final Color GOLD_SOFT = PanelUi.GOLD_SOFT;
-    private static final Color GOLD_DIM = new Color(0x7a5c22);
-    private static final Color GOLD_EDGE = new Color(0x5a4420);
-    private static final int STONE_TOP = 0x322c27;
-    private static final int STONE_BOTTOM = 0x1d1a17;
-    private static final int CARD_TOP = 0x2f2924;
-    private static final int CARD_BOTTOM = 0x211d19;
-    private static final int RIM_TOP = 0x94713a;
-    private static final int RIM_BOTTOM = 0x5a4420;
-    private static final Color WELL = new Color(0x151210);
-    private static final Color TEXT = PanelUi.TEXT;
-    private static final Color MUTED = PanelUi.MUTED;
-    private static final Color FAINT = new Color(0x776e62);
+    // The board's colours follow the theme (retheme() below). The values here are the Classic look.
+    private static Color GOLD = PanelUi.GOLD;
+    private static Color GOLD_SOFT = PanelUi.GOLD_SOFT;
+    private static Color GOLD_DIM = new Color(0x7a5c22);
+    private static Color GOLD_EDGE = new Color(0x5a4420);
+    private static int STONE_TOP = 0x322c27;
+    private static int STONE_BOTTOM = 0x1d1a17;
+    private static int CARD_TOP = 0x2f2924;
+    private static int CARD_BOTTOM = 0x211d19;
+    private static int RIM_TOP = 0x94713a;
+    private static int RIM_BOTTOM = 0x5a4420;
+    private static Color WELL = new Color(0x151210);
+    private static Color TEXT = PanelUi.TEXT;
+    private static Color MUTED = PanelUi.MUTED;
+    private static Color FAINT = new Color(0x776e62);
+    private static Color BAR_FILL = new Color(0xff981f);
+
+    private static int rgb(Color c)
+    {
+        return c.getRGB() & 0xffffff;
+    }
+
+    /** The theme changed (PanelUi.applyTheme): take the board's stone, rim and text from the new palette. */
+    static void retheme()
+    {
+        boolean classic = PanelUi.theme == PanelTheme.CLASSIC;
+        Color black = Color.BLACK;
+        GOLD = PanelUi.GOLD;
+        GOLD_SOFT = PanelUi.GOLD_SOFT;
+        TEXT = PanelUi.TEXT;
+        MUTED = PanelUi.MUTED;
+        GOLD_DIM = classic ? new Color(0x7a5c22) : PanelUi.mix(PanelUi.GOLD_DARK, black, 0.22f);
+        GOLD_EDGE = classic ? new Color(0x5a4420) : PanelUi.mix(PanelUi.GOLD_DARK, black, 0.45f);
+        STONE_TOP = classic ? 0x322c27 : rgb(PanelUi.lift(PanelUi.CARD_TOP, -4));
+        STONE_BOTTOM = classic ? 0x1d1a17 : rgb(PanelUi.lift(PanelUi.INSET, -2));
+        CARD_TOP = classic ? 0x2f2924 : rgb(PanelUi.lift(PanelUi.CARD_TOP, -7));
+        CARD_BOTTOM = classic ? 0x211d19 : rgb(PanelUi.lift(PanelUi.CARD_BOTTOM, -9));
+        RIM_TOP = classic ? 0x94713a : rgb(PanelUi.mix(PanelUi.GOLD_DARK, PanelUi.GOLD_SOFT, 0.15f));
+        RIM_BOTTOM = classic ? 0x5a4420 : rgb(GOLD_EDGE);
+        WELL = classic ? new Color(0x151210) : PanelUi.lift(PanelUi.INSET, -8);
+        FAINT = classic ? new Color(0x776e62) : PanelUi.mix(PanelUi.MUTED, black, 0.3f);
+        BAR_FILL = classic ? new Color(0xff981f) : PanelUi.ORANGE;
+    }
     private static final Color SHADOW = new Color(0, 0, 0, 170);
     private static final Color DONE_TICK = new Color(0x7fe57f);
     private static final Color BAR_BG = new Color(0, 0, 0, 170);
-    private static final Color BAR_FILL = new Color(0xff981f);
     private static final Color BAR_DONE = new Color(0x4fbf4f);
     private static final Color PENDING = new Color(0xffd83d);
     private static final Color DIM = new Color(0, 0, 0, 105);

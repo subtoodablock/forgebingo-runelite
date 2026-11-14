@@ -234,6 +234,7 @@ public class ForgeBingoPlugin extends Plugin
             }
             ForgeBingoPanel.usePixelFonts(config.panelFont() == ForgeBingoConfig.PanelFont.RUNESCAPE);
             PanelUi.animations = config.panelAnimations();
+            ForgeBingoPanel.useTheme(config.panelTheme());
             panel = new ForgeBingoPanel(this, api);
             panel.setImps(config.panelImps());
             panel.setRain(config.panelRain());
@@ -632,6 +633,14 @@ public class ForgeBingoPlugin extends Plugin
             ForgeBingoPanel p = panel;
             if (p != null) javax.swing.SwingUtilities.invokeLater(() -> p.setPixelFonts(pixel));
             else ForgeBingoPanel.usePixelFonts(pixel);
+            return;
+        }
+        if ("panelTheme".equals(e.getKey()))
+        {
+            PanelTheme theme = config.panelTheme();
+            ForgeBingoPanel p = panel;
+            if (p != null) javax.swing.SwingUtilities.invokeLater(() -> p.setTheme(theme));
+            else ForgeBingoPanel.useTheme(theme);
             return;
         }
         if ("panelAnimations".equals(e.getKey()) || "panelImps".equals(e.getKey()) || "panelRain".equals(e.getKey()))

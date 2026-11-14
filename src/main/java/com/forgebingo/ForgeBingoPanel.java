@@ -62,12 +62,47 @@ class ForgeBingoPanel extends PluginPanel
     /** wrap width for text inside a card (card padding + accent stripe) */
     private static final int CARD_TEXT = INNER - 22;
     // the look (palette, fonts, painted cards and bars) lives in PanelUi
-    private static final Color MUTED = PanelUi.MUTED;
-    private static final Color TEXT = PanelUi.TEXT;
+    // MUTED, TEXT and GOLD follow the theme (see setTheme)
+    private static Color MUTED = PanelUi.MUTED;
+    private static Color TEXT = PanelUi.TEXT;
     private static final Color ERROR = PanelUi.RED;
-    private static final Color GOLD = PanelUi.GOLD_SOFT;
+    private static Color GOLD = PanelUi.GOLD_SOFT;
     private static final Color GOOD = PanelUi.GREEN;
     private static final Color WAIT = PanelUi.AMBER;
+
+    /** Sets the palette before any panel exists (plugin start-up, previews). */
+    static void useTheme(PanelTheme theme)
+    {
+        PanelUi.applyTheme(theme);
+        MUTED = PanelUi.MUTED;
+        TEXT = PanelUi.TEXT;
+        GOLD = PanelUi.GOLD_SOFT;
+    }
+
+    /**
+     * Switches the look of everything already on screen (the "Theme" setting): the palette, who wanders over the
+     * panel and what falls down it. Cards built later pick the new colours up anyway.
+     */
+    void setTheme(PanelTheme theme)
+    {
+        if (theme == null || theme == PanelUi.theme) return;
+        Map<Color, Color> map = PanelUi.applyTheme(theme);
+        MUTED = PanelUi.MUTED;
+        TEXT = PanelUi.TEXT;
+        GOLD = PanelUi.GOLD_SOFT;
+        recolour(this, map);
+        imps.setTheme(theme);
+        revalidate();
+        repaint();
+    }
+
+    private static void recolour(Component c, Map<Color, Color> map)
+    {
+        if (c.isForegroundSet() && map.containsKey(c.getForeground())) c.setForeground(map.get(c.getForeground()));
+        if (c.isBackgroundSet() && map.containsKey(c.getBackground())) c.setBackground(map.get(c.getBackground()));
+        if (c instanceof PanelUi.Card) ((PanelUi.Card) c).remap(map);
+        if (c instanceof java.awt.Container) for (Component k : ((java.awt.Container) c).getComponents()) recolour(k, map);
+    }
 
     // ---- fonts: "Clean" (the website's Cinzel headings over a smooth sans-serif, the default) or the game's own
     // pixel fonts; chosen in the plugin settings
@@ -207,11 +242,11 @@ class ForgeBingoPanel extends PluginPanel
         this.api = api;
         setLayout(new BorderLayout());
         setBorder(BorderFactory.createEmptyBorder());
-        setBackground(ColorScheme.DARK_GRAY_COLOR);
+        setBackground(PanelUi.BG);
 
         Column content = new Column();
         content.setBorder(BorderFactory.createEmptyBorder(PAD, PAD, PAD, PAD));
-        content.setBackground(ColorScheme.DARK_GRAY_COLOR);
+        content.setBackground(PanelUi.BG);
         content.setOpaque(true);
 
         // --- header card: name, connection, account, send queue
@@ -326,7 +361,7 @@ class ForgeBingoPanel extends PluginPanel
         scroll.setBorder(BorderFactory.createEmptyBorder());
         scroll.getVerticalScrollBar().setPreferredSize(new Dimension(BAR, 0));
         scroll.getVerticalScrollBar().setUnitIncrement(16);
-        scroll.getViewport().setBackground(ColorScheme.DARK_GRAY_COLOR);
+        scroll.getViewport().setBackground(PanelUi.BG);
         add(scroll, BorderLayout.CENTER);
 
         pulseTimer.setCoalesce(true);
@@ -1208,7 +1243,7 @@ class ForgeBingoPanel extends PluginPanel
         bar.setFont(smallFont());
         bar.setString(text);
         bar.setForeground(done ? ColorScheme.PROGRESS_COMPLETE_COLOR : ColorScheme.BRAND_ORANGE);
-        bar.setBackground(ColorScheme.DARK_GRAY_COLOR);
+        bar.setBackground(PanelUi.BG);
         bar.setBorder(BorderFactory.createEmptyBorder());
         return fullWidth(bar, 16);
     }
@@ -1449,6 +1484,25 @@ class ForgeBingoPanel extends PluginPanel
         Column()
         {
             setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
+        }
+
+        @Override
+        protected void paintComponent(java.awt.Graphics g)
+        {
+            super.paintComponent(g);
+            if (PanelUi.theme == PanelTheme.INFERNO)
+            {
+                // the Inferno's rock is cracked with lava behind the cards
+                java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+                try
+                {
+                    ThemeFx.lavaGround(g2, getWidth(), getHeight(), g.getClipBounds(), PanelUi.animations ? PanelUi.pulse() : 0.5f);
+                }
+                finally
+                {
+                    g2.dispose();
+                }
+            }
         }
 
         @Override

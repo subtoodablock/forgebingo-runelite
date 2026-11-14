@@ -42,18 +42,65 @@ final class PanelUi
     }
 
     // ---- palette (warm stone and soft gold, like the website's panels; easy on the eyes next to the game)
-    static final Color BG = ColorScheme.DARK_GRAY_COLOR;
-    static final Color CARD_TOP = new Color(0x363029);
-    static final Color CARD_BOTTOM = new Color(0x2b2722);
-    static final Color CARD_EDGE = new Color(0x4d4437);
-    static final Color INSET = new Color(0x1f1c18);
-    static final Color INSET_EDGE = new Color(0x3d362c);
-    static final Color GOLD = new Color(0xffbf1f);
-    static final Color GOLD_SOFT = new Color(0xe9b84e);
-    static final Color GOLD_DARK = new Color(0xa07222);
-    static final Color ORANGE = new Color(0xff981f);
-    static final Color TEXT = new Color(0xe6dfd3);
-    static final Color MUTED = new Color(0xa69d8f);
+    // These twelve change with the theme (PanelTheme.palette, same order); read them when painting, never keep a
+    // copy in a static final. Classic values shown.
+    static Color BG = ColorScheme.DARK_GRAY_COLOR;
+    static Color CARD_TOP = new Color(0x363029);
+    static Color CARD_BOTTOM = new Color(0x2b2722);
+    static Color CARD_EDGE = new Color(0x4d4437);
+    static Color INSET = new Color(0x1f1c18);
+    static Color INSET_EDGE = new Color(0x3d362c);
+    static Color GOLD = new Color(0xffbf1f);
+    static Color GOLD_SOFT = new Color(0xe9b84e);
+    static Color GOLD_DARK = new Color(0xa07222);
+    static Color ORANGE = new Color(0xff981f);
+    static Color TEXT = new Color(0xe6dfd3);
+    static Color MUTED = new Color(0xa69d8f);
+
+    /** the look in use; change it with {@link #applyTheme} */
+    static volatile PanelTheme theme = PanelTheme.CLASSIC;
+
+    private static Color[] themed()
+    {
+        return new Color[] {BG, CARD_TOP, CARD_BOTTOM, CARD_EDGE, INSET, INSET_EDGE, GOLD, GOLD_SOFT, GOLD_DARK, ORANGE, TEXT, MUTED};
+    }
+
+    /**
+     * Switches the palette. Returns old colour -> new colour, for components that were given a colour when they
+     * were built (labels' text, card stripes); everything that paints itself just reads the new values.
+     */
+    static java.util.Map<Color, Color> applyTheme(PanelTheme t)
+    {
+        PanelTheme to = t == null ? PanelTheme.CLASSIC : t;
+        Color[] was = themed();
+        int[] p = to.palette;
+        BG = new Color(p[0]);
+        CARD_TOP = new Color(p[1]);
+        CARD_BOTTOM = new Color(p[2]);
+        CARD_EDGE = new Color(p[3]);
+        INSET = new Color(p[4]);
+        INSET_EDGE = new Color(p[5]);
+        GOLD = new Color(p[6]);
+        GOLD_SOFT = new Color(p[7]);
+        GOLD_DARK = new Color(p[8]);
+        ORANGE = new Color(p[9]);
+        TEXT = new Color(p[10]);
+        MUTED = new Color(p[11]);
+        theme = to;
+        BoardOverlay.retheme();
+        Color[] now = themed();
+        java.util.Map<Color, Color> map = new java.util.HashMap<>();
+        for (int i = 0; i < was.length; i++) if (!was[i].equals(now[i])) map.put(was[i], now[i]);
+        return map;
+    }
+
+    /** A colour a little lighter (or darker, for a negative amount) on every channel. */
+    static Color lift(Color c, int d)
+    {
+        return new Color(Math.max(0, Math.min(255, c.getRed() + d)), Math.max(0, Math.min(255, c.getGreen() + d)),
+            Math.max(0, Math.min(255, c.getBlue() + d)));
+    }
+
     static final Color GREEN = new Color(0x66d966);
     static final Color GREEN_DARK = new Color(0x2f6a33);
     static final Color AMBER = new Color(0xf2bb45);
@@ -120,6 +167,8 @@ final class PanelUi
         Graphics2D g2 = (Graphics2D) g.create();
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        // letters sit on whole pixels, so small text stays sharp (owner, 2026-11-14)
+        g2.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_OFF);
         g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
         return g2;
     }
@@ -220,7 +269,8 @@ final class PanelUi
     {
         private static final int ARC = 8;
         private Color accent;
-        private Color edge = CARD_EDGE;
+        /** null = the theme's usual edge */
+        private Color edge;
         private boolean inset;
         private Fader hover;
         private float alpha = 1f;
@@ -247,8 +297,38 @@ final class PanelUi
         Card inset(Color edgeColour)
         {
             inset = true;
-            edge = edgeColour == null ? INSET_EDGE : edgeColour;
+            edge = edgeColour;
             return this;
+        }
+
+        /** The theme changed: a stripe or edge given in the old palette moves to the new one. */
+        void remap(java.util.Map<Color, Color> map)
+        {
+            if (accent != null && map.containsKey(accent)) accent = map.get(accent);
+            if (edge != null && map.containsKey(edge)) edge = map.get(edge);
+        }
+
+        /** Blood running down from the top edge (the Theatre of Blood look). The same card always drips the same. */
+        private void paintDrips(Graphics2D g2, int w, int h)
+        {
+            java.util.Random r = new java.util.Random(w * 31L + getY() * 17L + getX());
+            Color blood = new Color(0xb3121c);
+            Color dark = new Color(0x6d0a12);
+            g2.setColor(alpha(blood, 210));
+            g2.fillRect(ARC / 2, 1, w - ARC, 2);
+            int n = Math.max(2, w / 34);
+            for (int i = 0; i < n; i++)
+            {
+                int x = ARC + r.nextInt(Math.max(1, w - 2 * ARC - 4));
+                int len = 3 + r.nextInt(Math.max(1, Math.min(11, h / 3)));
+                int wd = 2 + r.nextInt(2);
+                g2.setColor(alpha(dark, 200));
+                g2.fillRoundRect(x, 1, wd + 1, len + 1, wd + 1, wd + 1);
+                g2.setColor(blood);
+                g2.fillRoundRect(x, 1, wd, len, wd, wd);
+                g2.setColor(new Color(255, 150, 150, 150));
+                g2.fillRect(x, 2 + len / 2, 1, 1);
+            }
         }
 
         /** Brightens a little under the mouse. */
@@ -320,8 +400,8 @@ final class PanelUi
                 }
                 else
                 {
-                    Color top = mix(CARD_TOP, new Color(0x4a4135), hv);
-                    Color bottom = mix(CARD_BOTTOM, new Color(0x3a332a), hv);
+                    Color top = mix(CARD_TOP, lift(CARD_TOP, 18), hv);
+                    Color bottom = mix(CARD_BOTTOM, lift(CARD_BOTTOM, 13), hv);
                     g2.setPaint(new GradientPaint(0, 0, top, 0, h, bottom));
                 }
                 g2.fill(body);
@@ -333,14 +413,55 @@ final class PanelUi
                     g2.fillRect(0, 0, 3, h);
                     g2.setClip(old);
                 }
-                if (!inset)
+                // A crisp two-line frame like the game's own interface boxes (owner, 2026-11-14): a near-black outer
+                // line, the theme's edge colour just inside it, a faint light line under the top, and small gold
+                // brackets in the corners.
+                Color rim = mix(edge != null ? edge : inset ? INSET_EDGE : CARD_EDGE, GOLD_DARK, hv * 0.7f);
+                g2.setStroke(new java.awt.BasicStroke(1f));
+                if (inset)
                 {
-                    // a faint light line under the top edge, like the bevel on the website's panels
-                    g2.setColor(new Color(255, 240, 210, 16));
-                    g2.drawLine(ARC / 2 + 1, 1, w - ARC / 2 - 2, 1);
+                    g2.setColor(rim);
+                    g2.draw(body);
                 }
-                g2.setColor(mix(edge, GOLD_DARK, hv * 0.7f));
-                g2.draw(body);
+                else
+                {
+                    g2.setColor(new Color(0, 0, 0, 215));
+                    g2.draw(body);
+                    g2.setColor(rim);
+                    g2.draw(new RoundRectangle2D.Float(1.5f, 1.5f, w - 3f, h - 3f, ARC - 2, ARC - 2));
+                    g2.setColor(new Color(255, 240, 210, 20));
+                    g2.drawLine(ARC / 2 + 2, 2, w - ARC / 2 - 3, 2);
+                    if (w > 60 && h > 30)
+                    {
+                        g2.setColor(alpha(mix(GOLD_DARK, GOLD_SOFT, 0.35f + hv * 0.4f), 200));
+                        int in = 4;
+                        int len = 6;
+                        int r = w - 1 - in;
+                        int b = h - 1 - in;
+                        g2.drawLine(in, in, in + len, in);
+                        g2.drawLine(in, in, in, in + len);
+                        g2.drawLine(r, in, r - len, in);
+                        g2.drawLine(r, in, r, in + len);
+                        g2.drawLine(in, b, in + len, b);
+                        g2.drawLine(in, b, in, b - len);
+                        g2.drawLine(r, b, r - len, b);
+                        g2.drawLine(r, b, r, b - len);
+                    }
+                }
+                if (theme.drips && !inset && h > 20) paintDrips(g2, w, h);
+                if (theme == PanelTheme.XERIC && h > 26)
+                {
+                    // crystals growing in the corners (Chambers of Xeric); the same card always grows the same ones
+                    long seed = w * 131L + getY() * 17L + getX() + (inset ? 7 : 0);
+                    java.util.Random r = new java.util.Random(seed);
+                    Shape old = g2.getClip();
+                    g2.clip(body);
+                    int big = inset ? 10 : 16;
+                    ThemeFx.crystals(g2, seed, w - 9 - r.nextInt(8), h - 1, big + r.nextInt(4));
+                    if (!inset || r.nextBoolean()) ThemeFx.crystals(g2, seed + 1, 7 + r.nextInt(6), h - 1, big - 4 + r.nextInt(3));
+                    if (!inset && w > 150 && r.nextInt(3) > 0) ThemeFx.crystals(g2, seed + 2, w / 3 + r.nextInt(w / 3), h - 1, 8 + r.nextInt(3));
+                    g2.setClip(old);
+                }
             }
             finally
             {
@@ -396,8 +517,9 @@ final class PanelUi
                 boolean down = getModel().isArmed() && getModel().isPressed();
                 float hv = isEnabled() ? hover.get() : 0f;
                 Shape body = new RoundRectangle2D.Float(0.5f, 0.5f, w - 1f, h - 1f, 7, 7);
-                Color top = down ? new Color(0x2a251f) : mix(new Color(0x453c30), new Color(0x54483a), hv);
-                Color bottom = down ? new Color(0x332d25) : mix(new Color(0x322c25), new Color(0x3d352c), hv);
+                // stone a shade lighter than the cards, from the theme's own card colours
+                Color top = down ? lift(CARD_BOTTOM, -1) : mix(lift(CARD_TOP, 15), lift(CARD_TOP, 30), hv);
+                Color bottom = down ? lift(CARD_BOTTOM, 8) : mix(lift(CARD_BOTTOM, 7), lift(CARD_BOTTOM, 18), hv);
                 g2.setPaint(new GradientPaint(0, 0, top, 0, h, bottom));
                 g2.fill(body);
                 if (!down)
@@ -405,8 +527,11 @@ final class PanelUi
                     g2.setColor(new Color(255, 240, 210, 20));
                     g2.drawLine(4, 1, w - 5, 1);
                 }
-                g2.setColor(mix(new Color(0x6a5e50), GOLD, hv * 0.75f));
+                g2.setStroke(new java.awt.BasicStroke(1f));
+                g2.setColor(new Color(0, 0, 0, 215));
                 g2.draw(body);
+                g2.setColor(mix(lift(CARD_EDGE, 29), GOLD, hv * 0.75f));
+                g2.draw(new RoundRectangle2D.Float(1.5f, 1.5f, w - 3f, h - 3f, 5, 5));
 
                 g2.setFont(getFont());
                 FontMetrics fm = g2.getFontMetrics();
@@ -518,6 +643,15 @@ final class PanelUi
                 }
                 g2.setColor(new Color(0, 0, 0, 110));
                 g2.draw(new RoundRectangle2D.Float(0.5f, 0.5f, w - 1f, h - 1f, arc, arc));
+                if (theme == PanelTheme.XERIC && h >= 12 && w > 80)
+                {
+                    // crystals growing at the end of the bar (Chambers of Xeric)
+                    Shape old = g2.getClip();
+                    g2.clip(track);
+                    ThemeFx.crystals(g2, w * 7L + h, w - 10, h, h - 1);
+                    ThemeFx.crystals(g2, w * 5L + h, 8, h, h - 4);
+                    g2.setClip(old);
+                }
                 if (text != null && !text.isEmpty() && h >= 12)
                 {
                     g2.setFont(getFont());
@@ -694,7 +828,7 @@ final class PanelUi
                 g2.setFont(getFont());
                 FontMetrics fm = g2.getFontMetrics();
                 int y = (getHeight() - fm.getHeight()) / 2 + fm.getAscent();
-                g2.setColor(new Color(0, 0, 0, 170));
+                g2.setColor(new Color(0, 0, 0, 235));
                 g2.drawString(text, 1, y + 1);
                 g2.setColor(ORANGE);
                 g2.drawString(text, 0, y);
@@ -704,6 +838,8 @@ final class PanelUi
                 {
                     g2.setPaint(new GradientPaint(x0, 0, alpha(GOLD, 150), getWidth(), 0, alpha(GOLD, 0)));
                     g2.fillRect(x0, ly, getWidth() - x0, 1);
+                    // a few small crystals grow on the line (Chambers of Xeric)
+                    if (theme == PanelTheme.XERIC) ThemeFx.crystals(g2, text.hashCode(), x0 + 10 + Math.floorMod(text.hashCode(), 30), ly + 1, 10);
                 }
             }
             finally

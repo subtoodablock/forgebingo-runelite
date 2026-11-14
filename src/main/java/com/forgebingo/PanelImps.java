@@ -1,5 +1,7 @@
 package com.forgebingo;
 
+import com.forgebingo.core.Critter;
+import com.forgebingo.core.CritterSprite;
 import com.forgebingo.core.ImpSprite;
 import java.awt.AWTEvent;
 import java.awt.AlphaComposite;
@@ -45,7 +47,6 @@ final class PanelImps extends LayerUI<JComponent>
     /** client property: this component's top edge is somewhere an imp can stand */
     static final String PLATFORM = "forgebingo.impPlatform";
 
-    private static final int COUNT = 2;
     private static final float SPEED = 26f;
     private static final float GRAVITY = 1400f;
     /** body size the physics uses (the sprite itself is 42 x 34 with room for hats and staffs) */
@@ -65,6 +66,11 @@ final class PanelImps extends LayerUI<JComponent>
         ImpSprite.Hat hat = ImpSprite.Hat.NONE;
         ImpSprite.Item item = ImpSprite.Item.NONE;
         boolean rare;
+        /** which creature this is (the theme's cast), and which of its looks */
+        Critter kind = Critter.IMP;
+        int variant;
+        /** where a flier is heading */
+        float tx, ty;
         float sparkX, sparkY;
         Rectangle last;
     }
@@ -88,6 +94,8 @@ final class PanelImps extends LayerUI<JComponent>
     private static final class Drop
     {
         float x, y, vx, vy, rot, vrot, age;
+        /** drawn bigger than its pixels (our own small pixel-art bits; item icons stay 1) */
+        float scale = 1f;
         BufferedImage img;
         Rectangle last;
     }
@@ -97,6 +105,31 @@ final class PanelImps extends LayerUI<JComponent>
     private final Map<Integer, BufferedImage> itemCache = new HashMap<>();
     private IntFunction<BufferedImage> itemImages;
     private boolean rain = true;
+    /** the look in use: who walks here and what falls */
+    private PanelTheme theme = PanelUi.theme;
+    /** the theme's own moving touches: sand piles, tiny volcanoes */
+    private final ThemeFx fx = new ThemeFx();
+    private int lastMouseX;
+
+    /** PanelTheme.RARE_CHANCE; the preview turns it up so the rare bosses can be seen */
+    float rareChance = PanelTheme.RARE_CHANCE;
+
+    private boolean fxOn()
+    {
+        return ThemeFx.moving(theme) && PanelUi.animations;
+    }
+
+    /** The "Theme" setting changed: everyone leaves and the new cast drops in. */
+    void setTheme(PanelTheme t)
+    {
+        theme = t == null ? PanelTheme.CLASSIC : t;
+        imps.clear();
+        clearDrops();
+        fx.reset();
+        nextDrop = 2f;
+        sync();
+        if (layer != null) layer.repaint();
+    }
     private float nextDrop = 5f;
     /** the item the mouse is carrying, and where on it the mouse took hold */
     private Drop held;
@@ -252,7 +285,7 @@ final class PanelImps extends LayerUI<JComponent>
 
     private void sync()
     {
-        boolean run = (enabled || rain) && layer != null && layer.isShowing();
+        boolean run = (enabled || rain || fxOn()) && layer != null && layer.isShowing();
         if (run && !timer.isRunning())
         {
             lastNanos = 0;
@@ -315,7 +348,30 @@ final class PanelImps extends LayerUI<JComponent>
         m.life = rnd(150, 400);
         m.spark = rnd(2, 6);
         m.bubble = "";
-        rollLook(m);
+        // the cast member there are fewest of right now, so a theme's creatures all turn up
+        Critter[] cast = theme.cast;
+        Critter pick = cast[0];
+        int fewest = Integer.MAX_VALUE;
+        int start = rnd.nextInt(cast.length);
+        for (int i = 0; i < cast.length; i++)
+        {
+            Critter c = cast[(start + i) % cast.length];
+            int n = 0;
+            for (Imp o : imps) if (o != m && o.kind == c) n++;
+            if (n < fewest) { fewest = n; pick = c; }
+        }
+        // once in a great while a boss walks in instead
+        Critter[] rare = theme.rare();
+        if (rare.length > 0 && rnd.nextFloat() < rareChance) pick = rare[rnd.nextInt(rare.length)];
+        m.kind = pick;
+        m.variant = rnd.nextInt(pick.variants);
+        if (pick == Critter.IMP) rollLook(m);
+        else
+        {
+            m.hat = ImpSprite.Hat.NONE;
+            m.item = ImpSprite.Item.NONE;
+            m.rare = false;
+        }
     }
 
     private void refreshPlatforms()
@@ -389,6 +445,38 @@ final class PanelImps extends LayerUI<JComponent>
         m.seek = 0;
     }
 
+    /** A flier (Xarpus, Vespula) never lands: it drifts from spot to spot over the part of the panel you can see. */
+    private void fly(Imp m, float dt, int vw)
+    {
+        Rectangle view = layer.getVisibleRect();
+        if (m.life <= 0 && m.y < view.y - 50)
+        {
+            spawn(m);
+            return;
+        }
+        m.t -= dt;
+        boolean lost = m.ty < view.y - 80 || m.ty > view.y + view.height + 40;
+        if (m.mode != Mode.WALK || m.t <= 0 || (lost && m.life > 0))
+        {
+            // a new spot to head for; when its time is up it leaves over the top
+            m.mode = Mode.WALK;
+            m.t = rnd(2.5f, 6f);
+            m.tx = rnd(26, Math.max(40, vw - 26));
+            m.ty = m.life <= 0 ? view.y - 90 : view.y + rnd(36, Math.max(60, view.height - 40));
+        }
+        float dx = m.tx - m.x;
+        float dy = m.ty - m.y;
+        float d = (float) Math.max(1.0, Math.sqrt(dx * dx + dy * dy));
+        float speed = d < 20 ? 14f : 46f;
+        m.vx += (dx / d * speed - m.vx) * Math.min(1, dt * 1.6f);
+        m.vy += (dy / d * speed - m.vy) * Math.min(1, dt * 1.6f);
+        m.x += m.vx * dt;
+        m.y += m.vy * dt + (float) Math.sin(clock * 4.2f + m.tx) * 7f * dt;
+        if (Math.abs(m.vx) > 4) m.dir = m.vx > 0 ? 1 : -1;
+        // the wings beat about three times a second
+        m.px += dt * 6.5f;
+    }
+
     private void step(Imp m, float dt)
     {
         int vw = width();
@@ -406,6 +494,11 @@ final class PanelImps extends LayerUI<JComponent>
         {
             m.seekT -= dt;
             if (m.seekT <= 0) m.seek = 0;
+        }
+        if (m.kind.flies())
+        {
+            fly(m, dt, vw);
+            return;
         }
         if (m.mode == Mode.WALK || m.mode == Mode.IDLE)
         {
@@ -433,7 +526,7 @@ final class PanelImps extends LayerUI<JComponent>
             if (nx > p[1] - 3 || nx < p[0] + 3)
             {
                 boolean atEdge = nx > p[1] - 3 ? p[1] >= vw - 6.5f : p[0] <= 6.5f;
-                if (m.seek == m.dir && atEdge)
+                if (m.seek == m.dir && atEdge && m.kind != Critter.ZUK)
                 {
                     startClimb(m, m.dir);
                     return;
@@ -481,7 +574,7 @@ final class PanelImps extends LayerUI<JComponent>
             if (m.x <= EDGE || m.x >= vw - EDGE)
             {
                 m.x = Math.min(Math.max(m.x, EDGE), vw - EDGE);
-                if (m.seek != 0 && m.y > 40 && m.y < docH - 14)
+                if (m.seek != 0 && m.y > 40 && m.y < docH - 14 && m.kind != Critter.ZUK)
                 {
                     startClimb(m, m.x < vw / 2f ? -1 : 1);
                     return;
@@ -561,17 +654,31 @@ final class PanelImps extends LayerUI<JComponent>
     /** One step of the imps' world (the timer calls this; the offline preview calls it directly). */
     void advance(float dt)
     {
-        if (layer == null || !(enabled || rain)) return;
+        boolean fxNow = fxOn();
+        if (layer == null || !(enabled || rain || fxNow)) return;
         clock += dt;
         if (rain) stepRain(dt);
-        if (!enabled) return;
+        if (!enabled && !fxNow) return;
         sincePlats += dt;
         if (sincePlats > 1.2f)
         {
             sincePlats = 0;
             refreshPlatforms();
         }
-        while (imps.size() < COUNT)
+        if (fxNow)
+        {
+            Rectangle view = layer.getVisibleRect();
+            fx.step(theme, dt, plats, view, width(), rnd);
+            layer.repaint(view);
+        }
+        else if (!fx.isEmpty())
+        {
+            fx.reset();
+            layer.repaint();
+        }
+        if (!enabled) return;
+        while (imps.size() > theme.count) imps.remove(imps.size() - 1);
+        while (imps.size() < theme.count)
         {
             Imp m = new Imp();
             spawn(m);
@@ -582,11 +689,11 @@ final class PanelImps extends LayerUI<JComponent>
         for (int i = 0; i < imps.size(); i++)
         {
             Imp a = imps.get(i);
-            if ((a.mode != Mode.WALK && a.mode != Mode.IDLE) || a.chatCd > 0) continue;
+            if ((a.mode != Mode.WALK && a.mode != Mode.IDLE) || a.chatCd > 0 || a.kind.flies()) continue;
             for (int j = i + 1; j < imps.size(); j++)
             {
                 Imp b = imps.get(j);
-                if ((b.mode != Mode.WALK && b.mode != Mode.IDLE) || b.chatCd > 0) continue;
+                if ((b.mode != Mode.WALK && b.mode != Mode.IDLE) || b.chatCd > 0 || b.kind.flies()) continue;
                 if (Math.abs(a.x - b.x) < 26 && Math.abs(a.y - b.y) < 4 && rnd.nextFloat() < dt * 1.5f)
                 {
                     float d = rnd(1.2f, 3);
@@ -643,10 +750,26 @@ final class PanelImps extends LayerUI<JComponent>
 
     private Drop newDrop(float x, float y, float vx, float vy)
     {
-        BufferedImage img = itemImage(RAIN_ITEMS[rnd.nextInt(RAIN_ITEMS.length)]);
-        if (img == null || drops.size() >= RAIN_MAX) return null;
+        if (drops.size() >= RAIN_MAX) return null;
+        BufferedImage img = null;
+        float scale = 1f;
+        // a themed look mixes its own small falling bits (crystals, embers, ...) in with the famous items
+        Critter.Fall[] falls = theme.falls;
+        if (falls.length > 0 && rnd.nextFloat() < (theme == PanelTheme.BARROWS || theme == PanelTheme.INFERNO ? 0.4f : 0.6f))
+        {
+            img = CritterSprite.fall(falls[rnd.nextInt(falls.length)], rnd.nextInt(2));
+            scale = 1.5f;
+        }
+        if (img == null)
+        {
+            int[] items = theme.rainItems != null ? theme.rainItems : RAIN_ITEMS;
+            img = itemImage(items[rnd.nextInt(items.length)]);
+            scale = 1f;
+        }
+        if (img == null) return null;
         Drop d = new Drop();
         d.img = img;
+        d.scale = scale;
         d.x = x;
         d.y = y;
         d.vx = vx;
@@ -686,7 +809,7 @@ final class PanelImps extends LayerUI<JComponent>
         nextDrop -= dt;
         if (nextDrop <= 0)
         {
-            nextDrop = rnd(7, 18);
+            nextDrop = theme.falls.length > 0 ? rnd(4, 11) : rnd(7, 18);
             rainSome();
         }
         if (drops.isEmpty()) return;
@@ -734,6 +857,13 @@ final class PanelImps extends LayerUI<JComponent>
     @Override
     protected void processMouseMotionEvent(MouseEvent e, JLayer<? extends JComponent> l)
     {
+        if (e.getID() == MouseEvent.MOUSE_MOVED && fxOn())
+        {
+            // brushing a sand pile with the mouse knocks it away
+            Point at = SwingUtilities.convertPoint(e.getComponent(), e.getPoint(), l);
+            fx.mouseAt(at.x, at.y, at.x - lastMouseX, rnd);
+            lastMouseX = at.x;
+        }
         if (!rain || held != null || e.getID() != MouseEvent.MOUSE_MOVED) return;
         if (drops.isEmpty())
         {
@@ -753,6 +883,7 @@ final class PanelImps extends LayerUI<JComponent>
         g.translate(d.x, d.y);
         g.rotate(d.rot);
         if (d == held) g.scale(1.15, 1.15);
+        if (d.scale != 1f) g.scale(d.scale, d.scale);
         g.drawImage(d.img, -d.img.getWidth() / 2, -d.img.getHeight() / 2, null);
         g.setTransform(old);
         g.setComposite(oldC);
@@ -774,6 +905,13 @@ final class PanelImps extends LayerUI<JComponent>
                 m.bubble = "!";
                 m.bubbleT = 0.9f;
                 m.dir = p.x < m.x ? 1 : -1;
+                if (m.kind.variants > 1)
+                {
+                    // a poke changes its colour (the crab's crystal), with a small hop
+                    m.variant = (m.variant + 1) % m.kind.variants;
+                    launch(m, m.dir * rnd(10, 30), -rnd(150, 200));
+                    return;
+                }
                 launch(m, m.dir * rnd(40, 90), -rnd(280, 360));
                 return;
             }
@@ -788,11 +926,13 @@ final class PanelImps extends LayerUI<JComponent>
         super.paint(g, c);
         boolean showImps = enabled && !imps.isEmpty();
         boolean showRain = rain && !drops.isEmpty();
-        if (!showImps && !showRain) return;
+        boolean showFx = fxOn() && !fx.isEmpty();
+        if (!showImps && !showRain && !showFx) return;
         Graphics2D g2 = (Graphics2D) g.create();
         try
         {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            if (showFx) fx.paint(g2, clock);
             if (showRain)
             {
                 g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
@@ -812,11 +952,11 @@ final class PanelImps extends LayerUI<JComponent>
         boolean moving = m.mode == Mode.WALK || m.mode == Mode.CLIMB;
         boolean stepUp = moving && ((int) Math.floor(m.px)) % 2 == 0;
         int frame = stepUp || m.mode == Mode.AIR ? 1 : 0;
-        BufferedImage img = ImpSprite.image(m.hat, m.item, frame);
+        BufferedImage img = m.kind == Critter.IMP ? ImpSprite.image(m.hat, m.item, frame) : CritterSprite.image(m.kind, m.variant, frame);
         float x = Math.round(m.x);
         float y = Math.round(m.y);
 
-        if (m.mode != Mode.AIR && m.mode != Mode.CLIMB)
+        if (m.mode != Mode.AIR && m.mode != Mode.CLIMB && !m.kind.flies())
         {
             g.setColor(new Color(0, 0, 0, 70));
             g.fill(new Ellipse2D.Float(x - 8, y - 2, 16, 3.5f));

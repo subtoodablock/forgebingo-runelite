@@ -170,6 +170,14 @@ public interface ForgeBingoConfig extends Config
         return true;
     }
 
+    @ConfigItem(keyName = "panelTheme", name = "Theme",
+        description = "The plugin's look: its colours, the little creatures that wander over the side panel and what falls down it. Classic is the original stone and gold with imps.",
+        position = 5)
+    default PanelTheme panelTheme()
+    {
+        return PanelTheme.CLASSIC;
+    }
+
     @ConfigItem(keyName = "panelFont", name = "Side panel font",
         description = "Clean: smooth, easy-to-read text. RuneScape: the game's own pixel font.",
         position = 6)
