@@ -17,7 +17,7 @@ public final class ItemSlots
     {
         public final String key;
         public final List<Integer> itemIds;
-        /** how many of this sub-task the task needs (required quantity shared out evenly, at least 1) */
+        /** how many of this sub-task the task needs: its own amount when set, else the total shared out evenly */
         public final int need;
         public final int approved;
         public final int pending;
@@ -72,10 +72,20 @@ public final class ItemSlots
             members.add(slot);
         }
         if (members.size() < 2) return Collections.emptyList();
-        int need = Math.max(1, k.requiredQty / members.size());
+        int shared = Math.max(1, k.requiredQty / members.size());
         List<Slot> out = new ArrayList<>();
         for (int i = 0; i < members.size(); i++)
         {
+            int need = shared;
+            if (k.itemQtys != null && !k.itemQtys.isEmpty())
+            {
+                need = 1;
+                for (Integer x : members.get(i))
+                {
+                    Integer q = k.itemQtys.get(String.valueOf(x));
+                    if (q != null && q > need) need = q;
+                }
+            }
             ApiModels.SlotProgress p = k.itemProgress == null ? null : k.itemProgress.get(keys.get(i));
             int approved = p == null ? 0 : Math.min(need, p.approved);
             int pending = p == null ? 0 : Math.max(0, Math.min(need - approved, p.pending));

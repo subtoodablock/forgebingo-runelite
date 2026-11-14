@@ -124,6 +124,8 @@ public final class ApiModels
         public Boolean eachItem;
         /** groups of item ids where any one counts for the same sub-task (like the website's "Any one: ...") */
         public List<List<Integer>> itemGroups;
+        /** with eachItem: item id -> amount, when the items need different amounts; null = shared equally */
+        public java.util.Map<String, Integer> itemQtys;
         /** per sub-task progress, keyed like the server's item_slot: "i&lt;itemId&gt;" or "g&lt;groupIndex&gt;" */
         public java.util.Map<String, SlotProgress> itemProgress;
     }
