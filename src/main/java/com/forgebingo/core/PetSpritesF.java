@@ -562,12 +562,28 @@ public final class PetSpritesF
     {
         Grid g = new Grid();
         int dy = -f;
-        spiderLegs(g, new int[][] {{14, 21 + dy, 9, 11 + dy, 8}, {17, 22 + dy, 14, 12 + dy, 13}, {25, 21 + dy, 29, 11 + dy, 30},
-            {28, 22 + dy, 32, 13 + dy, 34}}, 'R', 'G', f);
+        // four inverted-V legs: thick thigh up to a high knee, thin shin down to a pointed foot
+        int[][] vl = {{15, 22, 11, 11, 8}, {18, 24, 16, 13, 14}, {24, 24, 27, 12, 29}, {27, 22, 31, 11, 33}};
+        Grid legs = new Grid();
+        for (int i = 0; i < 4; i++)
+        {
+            int[] p = vl[i];
+            boolean up = (i % 2 == 0) == (f == 1);
+            int fx = up ? p[4] + (p[4] < p[0] ? 2 : -2) : p[4];
+            int fy = up ? 29 : 32;
+            int ry = p[1] + dy;
+            int ky = p[3] + dy - (up ? 2 : 0);
+            line(legs, p[0], ry, p[2], ky, 'r');
+            line(legs, p[0] + 1, ry, p[2] + 1, ky, 'r');
+            line(legs, p[2], ky, fx, fy, 'r');
+            legs.set(p[2], ky, 'T');
+            legs.set(p[2] + 1, ky, 'T');
+        }
         Grid abd = bevel(oval(17, 10 + dy, 15, 15, 'g'), 'G', 'W');
         for (int x = 20; x < 30; x += 4) tint(abd, x, 10 + dy, 2, 15, 'W');
         for (int x = 22; x < 30; x += 4) tint(abd, x, 10 + dy, 1, 15, 'G');
         part(g, abd);
+        part(g, legs);
         part(g, bevel(oval(10, 16 + dy, 12, 11, 'g'), 'G', 'W'));
         g.pxs('z', 11, 19 + dy, 12, 19 + dy, 13, 19 + dy, 14, 19 + dy, 15, 19 + dy);
         g.pxs('x', 11, 19 + dy, 13, 19 + dy);
@@ -612,31 +628,34 @@ public final class PetSpritesF
         int dy = -f;
         int w = f == 0 ? 0 : 2;
         // wing: arm bone up to the wrist, three finger bones, torn membrane between them
-        int sx = 23;
-        int sy = 17 + dy;
-        int wx = 27;
-        int wy = 5 + w;
-        int[][] tips = {{34, 8 + w}, {34, 16 + w}, {29, 22 + w}};
+        int sx = 22;
+        int sy = 16 + dy;
+        int wx = 25;
+        int wy = 3 + w;
+        int[][] tips = {{34, 6 + w}, {34, 15 + w}, {30, 23 + w}};
         Grid mem = new Grid();
-        with(mem, tri(sx, sy, wx, wy, tips[0][0], tips[0][1], 'n'));
-        with(mem, tri(sx, sy, tips[0][0], tips[0][1], tips[1][0], tips[1][1], 'n'));
-        with(mem, tri(sx, sy, tips[1][0], tips[1][1], tips[2][0], tips[2][1], 'n'));
-        // tears between the finger tips
-        with(mem, tri(34, 12 + w, 29, 14 + w, 34, 15 + w, 'z'));
-        with(mem, tri(34, 19 + w, 30, 19 + w, 32, 23 + w, 'z'));
-        for (int j = 0; j < mem.h; j++)
+        with(mem, tri(sx, sy, wx, wy, tips[0][0], tips[0][1], 'l'));
+        with(mem, tri(sx, sy, tips[0][0], tips[0][1], tips[1][0], tips[1][1], 'l'));
+        with(mem, tri(sx, sy, tips[1][0], tips[1][1], tips[2][0], tips[2][1], 'l'));
+        // scalloped, slightly torn trailing edge: bites out of the membrane between the finger tips
+        double[][] bites = {{33.5, 10.5 + w, 2.4}, {33.5, 19.5 + w, 3.0}, {27.5, 21.5 + w, 1.8}};
+        for (double[] b : bites)
         {
-            for (int i = 0; i < mem.w; i++)
+            for (int j = 0; j < mem.h; j++)
             {
-                if (mem.px[j][i] == 'z') mem.px[j][i] = 0;
+                for (int i = 0; i < mem.w; i++)
+                {
+                    if ((i + 0.5 - b[0]) * (i + 0.5 - b[0]) + (j + 0.5 - b[1]) * (j + 0.5 - b[1]) <= b[2] * b[2]) mem.px[j][i] = 0;
+                }
             }
         }
+        bevel(mem, 'L', 'n');
         part(g, mem);
         Grid bones = new Grid();
         line(bones, sx, sy, wx, wy, 'e');
         for (int[] t : tips) line(bones, wx, wy, t[0], t[1], 'e');
+        with(g, bones);
         g.pxs('x', wx, wy);
-        part(g, bones);
         Grid tail = new Grid();
         thick(tail, 'l', 29, 23 + dy, 32, 24 + dy, 33, 20 + dy - f);
         part(g, tail);
@@ -683,17 +702,30 @@ public final class PetSpritesF
         with(g, halo);
         // trailing pale tendrils
         Grid t = new Grid();
-        tendril(t, 17, 22 + dy, 8 - f, ph, -0.25, 'N');
-        tendril(t, 21, 24 + dy, 7, ph + 1.5, 0.0, 'N');
-        tendril(t, 25, 22 + dy, 8 - f, ph + 3, 0.25, 'N');
-        line(t, 17, 14 + dy, 13 - f, 19 + dy, 'N');
-        line(t, 13 - f, 19 + dy, 12 + f, 23 + dy, 'N');
-        line(t, 25, 14 + dy, 29 + f, 19 + dy, 'N');
-        line(t, 29 + f, 19 + dy, 30 - f, 23 + dy, 'N');
+        tendril(t, 17, 26 + dy, 5, ph, -0.2, 'N');
+        tendril(t, 21, 27 + dy, 4, ph + 1.5, 0.0, 'N');
+        tendril(t, 25, 26 + dy, 5, ph + 3, 0.2, 'N');
+        // two pixel wide wavy side tendrils
+        for (int side = 0; side < 2; side++)
+        {
+            int dir = side == 0 ? -1 : 1;
+            int x0 = side == 0 ? 17 : 25;
+            for (int k = 0; k <= 10; k++)
+            {
+                int x = x0 + (int) Math.round(dir * k * 0.55 + Math.sin(k * 0.8 + ph + side * 2) * 1.6);
+                t.set(x, 13 + dy + k, k > 8 ? 'L' : 'N');
+                t.set(x + 1, 13 + dy + k, k > 8 ? 'L' : 'N');
+            }
+        }
         part(g, t);
-        g.pxs('L', 12 + f, 23 + dy, 30 - f, 23 + dy);
-        // tall cloak
-        part(g, bevel(trap(21, 8 + dy, 24 + dy, 2, 6, 'm'), 'M', 'z'));
+        // tall cloak with a tattered hem
+        Grid cloak = bevel(trap(21, 8 + dy, 24 + dy, 2, 6, 'm'), 'M', 'z');
+        for (int x = 15; x < 27; x++)
+        {
+            int len = x % 3 == 0 ? 3 : x % 3 == 1 ? 1 : 2;
+            for (int j = 0; j < len; j++) cloak.set(x, 25 + dy + j, j == len - 1 ? 'z' : 'm');
+        }
+        part(g, cloak);
         g.pxs('M', 20, 13 + dy, 20, 15 + dy, 19, 18 + dy, 18, 21 + dy);
         g.pxs('z', 23, 14 + dy, 23, 17 + dy, 24, 20 + dy);
         part(g, bevel(oval(16, 1 + dy, 10, 11, 'm'), 'M', 'z'));
@@ -718,13 +750,28 @@ public final class PetSpritesF
         part(g, tail);
         part(g, bevel(oval(12, 19 + dy, 17, 11, 'a'), 'A', 'h'));
         // far horn, curling over the top of the head
-        Grid far = bevel(taper(path(12, 10 + dy, 9, 5 + dy, 12, 1 + dy, 18, 1 + dy, 21, 5 + dy, 19, 8 + dy), 4, 'r'), 't', 'w');
+        java.util.List<int[]> fp = new java.util.ArrayList<>();
+        for (int k = 0; k <= 24; k++)
+        {
+            double t = k / 24.0;
+            double a = Math.toRadians(-150 + t * 400);
+            double r = 7.5 - 4.5 * t;
+            fp.add(new int[] {(int) Math.round(14 + r * Math.cos(a)), (int) Math.round(11 + dy + r * Math.sin(a))});
+        }
+        Grid far = bevel(taper(fp, 4, 'r'), 't', 'w');
         part(g, far);
         // head
         part(g, bevel(oval(7, 9 + dy, 17, 15, 'a'), 'A', 'h'));
         // near horn: out from the brow, round the side of the head and curling forward underneath
-        java.util.List<int[]> hp = path(15, 10 + dy, 20, 7 + dy, 25, 9 + dy, 26, 15 + dy, 24, 20 + dy, 20, 22 + dy, 17, 19 + dy, 18, 16 + dy);
-        Grid horn = bevel(taper(hp, 4, 't'), 'T', 'r');
+        java.util.List<int[]> hp = new java.util.ArrayList<>();
+        for (int k = 0; k <= 44; k++)
+        {
+            double t = k / 44.0;
+            double a = Math.toRadians(-120 + t * 470);
+            double r = 6.5 - 4.0 * t;
+            hp.add(new int[] {(int) Math.round(19 + r * Math.cos(a)), (int) Math.round(14 + dy + r * Math.sin(a))});
+        }
+        Grid horn = bevel(taper(hp, 3, 't'), 'T', 'r');
         for (int k = 2; k < hp.size() - 2; k += 3)
         {
             int[] p = hp.get(k);

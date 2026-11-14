@@ -99,13 +99,16 @@ public final class PetSpritesC
             case AGGY:
                 switch ((char) c)
                 {
-                    case 'a': return 0x7e8e6c; // grey-green skin
-                    case 'b': return 0xa6b690;
-                    case 'c': return 0x4e5c44;
-                    case 'd': return 0x5c6a5c; // wing membrane
-                    case 'e': return 0x8a9888;
-                    case 'f': return 0x3a463c;
+                    case 'a': return 0xa8c098; // pale grey-green skin
+                    case 'b': return 0xd0e2c0;
+                    case 'c': return 0x6a8060;
+                    case 'd': return 0x30343c; // charcoal wing membrane
+                    case 'e': return 0xb4bcb4; // bone / rim
+                    case 'f': return 0x1c1f26;
                     case 'g': return 0x6a4a2a; // hilt
+                    case 'h': return 0x5e6a34; // olive robe
+                    case 'i': return 0x84924a;
+                    case 'j': return 0x38401e;
                     default: break;
                 }
                 break;
@@ -443,39 +446,51 @@ public final class PetSpritesC
         return g;
     }
 
-    /** Aggy: a hunched grey-green figure with a ragged bony wing hanging down and a sword held out in front. */
+    /** Aggy: a hunched pale grey-green figure in an olive robe, with big dark ragged bony wings and a bright sword. */
     private static Grid aggy(int f)
     {
         Grid g = new Grid();
         int dy = f;
-        int w = f;
-        // ragged wing: membrane between bony fingers, scalloped edge
-        int[] px = {20, 28, 27, 31, 29, 29, 25, 25, 21};
-        int[] py = {12 + dy, 6 + dy + w, 13 + dy, 15 + dy, 21 + dy, 26 + dy, 23 + dy, 29 + dy, 24 + dy};
+        // dark charcoal wing with a scalloped lower edge, light rim and bone line along the top
+        int[] px = {15, 23, 23, 27, 25, 27, 23, 21, 18, 17};
+        int[] py = {12 + dy, 5 + dy + f, 12 + dy, 14 + dy, 19 + dy, 25 + dy, 23 + dy, 28 + dy, 23 + dy, 20 + dy};
         part(g, bevel(poly(px, py, 'd'), 'e', 'f'));
-        part(g, line(20, 13 + dy, 28, 7 + dy + w, 1, 'f'));
-        part(g, line(21, 14 + dy, 31, 15 + dy, 1, 'f'));
-        part(g, line(21, 15 + dy, 29, 26 + dy, 1, 'f'));
-        part(g, line(21, 16 + dy, 25, 29 + dy, 1, 'f'));
-        g.pxs('e', 28, 7 + dy + w, 31, 15 + dy, 29, 26 + dy, 25, 29 + dy);
-        feet(g, new int[] {11, 17}, 4, 28, 'c', 'a', 'z', f);
-        part(g, bevel(oval(10, 13 + dy, 12, 17, 'a'), 'b', 'c'));
-        g.pxs('b', 14, 22 + dy, 15, 23 + dy, 16, 22 + dy);
-        // hunched head with pointed ears
-        part(g, bevel(oval(5, 8 + dy, 11, 10, 'a'), 'b', 'c'));
-        part(g, line(6, 5 + dy, 7, 9 + dy, 1, 'c'));
-        part(g, line(13, 5 + dy, 13, 9 + dy, 1, 'c'));
-        g.pxs('y', 7, 12 + dy, 8, 12 + dy, 11, 12 + dy, 12, 12 + dy).pxs('z', 7, 13 + dy, 11, 13 + dy);
+        part(g, line(16, 12 + dy, 23, 6 + dy + f, 1, 'e'));
+        g.pxs('e', 24, 6 + dy + f);
+        int[][] tips = {{27, 14 + dy}, {27, 25 + dy}, {21, 28 + dy}};
+        for (int[] t : tips)
+        {
+            for (int i = 0; i <= 10; i++)
+            {
+                int x = 17 + (t[0] - 17) * i / 10;
+                int y = 13 + dy + (t[1] - 13 - dy) * i / 10;
+                g.set(x, y, 'e');
+            }
+        }
+        feet(g, new int[] {7, 12}, 4, 28, 'h', 'i', 'z', f);
+        // olive robe body with a belt, pale skin showing at the neck and hands
+        Grid robe = bevel(oval(6, 14 + dy, 12, 16, 'h'), 'i', 'j');
+        robe.pxs('j', 8, 24 + dy, 9, 24 + dy, 10, 24 + dy, 11, 24 + dy, 12, 24 + dy, 13, 24 + dy);
+        robe.pxs('y', 10, 24 + dy);
+        part(g, robe);
+        // hunched head, pale skin, pointed ears, dark brow and yellow eyes
+        part(g, bevel(oval(3, 8 + dy, 11, 9, 'a'), 'b', 'c'));
+        part(g, line(4, 5 + dy, 5, 9 + dy, 1, 'c'));
+        part(g, line(11, 5 + dy, 11, 9 + dy, 1, 'c'));
+        g.pxs('z', 4, 11 + dy, 5, 11 + dy, 6, 12 + dy, 9, 12 + dy, 10, 11 + dy, 11, 11 + dy);
+        g.pxs('y', 5, 12 + dy, 6, 13 + dy, 10, 12 + dy, 9, 13 + dy).pxs('Y', 5, 12 + dy, 10, 12 + dy);
+        g.pxs('z', 5, 13 + dy, 10, 13 + dy);
         g.pxs('c', 6, 15 + dy, 7, 15 + dy, 8, 15 + dy);
         // arm and sword
-        part(g, line(11, 20 + dy, 7, 24, 2, 'b'));
-        Grid blade = rect(3, 9, 2, 15, 's');
-        blade.pxs('x', 3, 10, 3, 11, 3, 12, 3, 13);
-        blade.pxs('S', 4, 14, 4, 15, 4, 16, 4, 17, 4, 18, 4, 19, 4, 20, 4, 21, 4, 22, 4, 23);
+        part(g, line(8, 20 + dy, 5, 24, 2, 'a'));
+        Grid blade = rect(1, 9, 2, 15, 'x');
+        blade.pxs('s', 2, 12, 2, 13, 2, 14, 2, 15, 2, 16, 2, 17, 2, 18, 2, 19, 2, 20, 2, 21, 2, 22, 2, 23);
+        blade.pxs('S', 1, 20, 1, 21, 1, 22, 1, 23);
         part(g, blade);
-        part(g, rect(1, 24, 6, 2, 'y'));
-        part(g, rect(3, 26, 2, 3, 'g'));
-        g.pxs('b', 4, 25);
+        part(g, rect(0, 24, 5, 2, 'y'));
+        g.pxs('Y', 0, 24, 1, 24);
+        part(g, rect(1, 26, 2, 3, 'g'));
+        g.pxs('a', 3, 25);
         return g;
     }
 
@@ -665,24 +680,22 @@ public final class PetSpritesC
         return g;
     }
 
-    /** Gull: a small white gryphon chick: eagle head, beak, wings and claws at the front, a tawny lion hind body and tufted tail. */
+    /** Gull: a small white gryphon chick: eagle head, beak, wings and claws at the front, a short tawny lion hind body and tufted tail. */
     private static Grid gull(int f)
     {
         Grid g = new Grid();
         int dy = f;
-        part(g, line(24, 22 + dy, 27, 19 + dy, 1, 'j'));
-        part(g, bevel(oval(26, 14 + dy, 4, 7, 'h'), 'i', 'j'));
-        feet(g, new int[] {18, 23}, 4, 27, 'h', 'i', 'j', f);
+        part(g, line(21, 23 + dy, 24, 20 + dy, 1, 'j'));
+        part(g, bevel(oval(23, 15 + dy, 4, 7, 'h'), 'i', 'j'));
+        feet(g, new int[] {16, 20}, 4, 27, 'h', 'i', 'j', f);
         feet(g, new int[] {6, 10}, 3, 27, 'd', 'e', 'f', 1 - f);
-        part(g, bevel(oval(13, 17 + dy, 13, 11, 'h'), 'i', 'j'));
-        g.pxs('j', 18, 21 + dy, 19, 22 + dy, 21, 20 + dy);
+        part(g, bevel(oval(13, 18 + dy, 10, 10, 'h'), 'i', 'j'));
+        g.pxs('j', 17, 22 + dy, 18, 23 + dy, 20, 21 + dy);
         part(g, bevel(oval(5, 14 + dy, 12, 13, 'a'), 'b', 'c'));
-        // front wing, tip lifted
         Grid wing = bevel(oval(10, 12 + dy, 11, 8, 'b'), 'x', 'c');
         wing.pxs('c', 13, 15 + dy, 15, 16 + dy, 17, 16 + dy);
         wing.pxs('g', 20, 12 + dy - f, 21, 13 + dy - f, 19, 11 + dy - f);
         part(g, wing);
-        // eagle head, tufts, hooked beak
         part(g, bevel(oval(2, 4 + dy, 13, 12, 'a'), 'b', 'c'));
         part(g, line(7, 1 + dy, 8, 4 + dy, 1, 'c'));
         part(g, line(11, 1 + dy, 11, 4 + dy, 1, 'c'));
@@ -729,29 +742,29 @@ public final class PetSpritesC
     {
         Grid g = new Grid();
         int dy = f;
-        part(g, line(28, 29, 31, 27 - f, 2, 'a'));
-        part(g, line(31, 27 - f, 32, 22 - f, 1, 'a'));
-        g.pxs('d', 32, 21 - f, 33, 21 - f, 32, 20 - f).pxs('e', 32, 20 - f);
-        Grid c1 = bevel(oval(7, 24, 24, 9, 'a'), 'b', 'c');
-        for (int x = 10; x < 28; x += 4) c1.pxs('c', x, 27, x + 1, 28);
+        part(g, line(23, 29, 25, 27 - f, 2, 'a'));
+        part(g, line(25, 27 - f, 26, 23 - f, 1, 'a'));
+        g.pxs('d', 26, 22 - f, 25, 22 - f, 26, 21 - f).pxs('e', 26, 21 - f);
+        Grid c1 = bevel(oval(6, 24, 21, 9, 'a'), 'b', 'c');
+        for (int x = 9; x < 25; x += 4) c1.pxs('c', x, 27, x + 1, 28);
         part(g, c1);
-        Grid c2 = bevel(oval(10, 19 + dy, 18, 8, 'a'), 'b', 'c');
-        for (int x = 13; x < 25; x += 4) c2.pxs('c', x, 22 + dy, x + 1, 23 + dy);
+        Grid c2 = bevel(oval(9, 19 + dy, 16, 8, 'a'), 'b', 'c');
+        for (int x = 12; x < 22; x += 4) c2.pxs('c', x, 22 + dy, x + 1, 23 + dy);
         part(g, c2);
-        part(g, bevel(rect(9, 13 + dy, 6, 9, 'a'), 'b', 'c'));
-        int[][] fan = {{12, 4}, {16, 3}, {20, 6}, {21, 11}, {19, 15}};
+        part(g, bevel(rect(8, 13 + dy, 6, 9, 'a'), 'b', 'c'));
+        int[][] fan = {{11, 4}, {15, 3}, {19, 6}, {20, 11}, {18, 15}};
         for (int[] t : fan)
         {
-            part(g, bevel(line(10, 11 + dy, t[0], t[1] + dy, 3, 'd'), 'e', 'f'));
+            part(g, bevel(line(9, 11 + dy, t[0], t[1] + dy, 3, 'd'), 'e', 'f'));
             g.pxs('e', t[0], t[1] + dy);
         }
-        part(g, bevel(oval(2, 6 + dy, 14, 11, 'a'), 'b', 'c'));
-        part(g, bevel(oval(0, 11 + dy, 8, 5, 'a'), 'b', 'c'));
-        g.pxs('d', 3, 5 + dy, 4, 4 + dy, 5, 5 + dy, 4, 5 + dy);
-        eye(g, 7, 9 + dy);
-        g.pxs('y', 8, 9 + dy, 8, 10 + dy);
-        g.pxs('z', 1, 12 + dy, 3, 14 + dy, 4, 14 + dy);
-        g.pxs('x', 2, 15 + dy, 5, 15 + dy);
+        part(g, bevel(oval(1, 6 + dy, 14, 11, 'a'), 'b', 'c'));
+        part(g, bevel(oval(1, 11 + dy, 7, 5, 'a'), 'b', 'c'));
+        g.pxs('d', 2, 5 + dy, 3, 4 + dy, 4, 5 + dy, 3, 5 + dy);
+        eye(g, 6, 9 + dy);
+        g.pxs('y', 7, 9 + dy, 7, 10 + dy);
+        g.pxs('z', 1, 12 + dy, 2, 14 + dy, 3, 14 + dy);
+        g.pxs('x', 1, 15 + dy, 4, 15 + dy);
         return g;
     }
 

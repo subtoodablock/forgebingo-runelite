@@ -252,11 +252,11 @@ public final class SkillProps
             case PRAYER: prayer(g, st, f); break;
             case HERBLORE: herblore(g, st, f); break;
             case CRAFTING: crafting(g, st, f); break;
-            case FLETCHING: fletching(g, st, f); break;
+            case FLETCHING: fletching2(g, st, f); break;
             case CONSTRUCTION: construction(g, st, f); break;
             case AGILITY: agility(g, st, f); break;
-            case THIEVING: thieving(g, st, f); break;
-            case HUNTER: hunter(g, st, f); break;
+            case THIEVING: thieving2(g, st, f); break;
+            case HUNTER: hunter2(g, st, f); break;
             case SLAYER: slayer(g, st, f); break;
             case ATTACK: attack(g, st, f); break;
             case STRENGTH: strength(g, st, f); break;
@@ -270,6 +270,160 @@ public final class SkillProps
     }
 
     // ---------------------------------------------------------------- props
+
+    private static void hunter2(Grid g, int st, int f)
+    {
+        Grid c = L();
+        rc(c, 4, 16, 18, 8, 'N');
+        rc(c, 4, 16, 18, 1, 'F');
+        rc(c, 6, 18, 14, 5, 'z');
+        rc(c, 7, 20, 12, 1, 'm');
+        rc(c, 4, 18, 2, 6, 'n');
+        rc(c, 20, 18, 2, 6, 'n');
+        rc(c, 4, 23, 18, 1, 'n');
+        c.pxs('n', 9, 17, 13, 17, 17, 17);
+        Grid l = L();
+        if (st == 0)
+        {
+            ov(l, 10, 20, 4, 4, 'r');
+            shade(l, 'r', 'R', 'v');
+            P(g, l);
+            l = L();
+            ln(l, 5, 23, 6, 14, 'N');
+            ln(l, 6, 23, 7, 14, 'N');
+            P(g, l);
+            ln(g, 6 - f, 15, 1, 21, 'w');
+            return;
+        }
+        if (st == 1)
+        {
+            P(g, c);
+            l = L();
+            ln(l, 1, 23, 2, 17, 'N');
+            ln(l, 2, 23, 3, 17, 'N');
+            P(g, l);
+            return;
+        }
+        ov(l, 8, 21, 3, 3, 'r');
+        shade(l, 'r', 'R', 'v');
+        P(g, l);
+        g.pxs('w', 9, 21);
+        Grid t = L();
+        for (int x = 4; x <= 21; x++)
+        {
+            int lift = (int) Math.round((21 - x) * 4 / 17.0);
+            for (int y = 0; y < S; y++)
+            {
+                if (c.px[y][x] != 0 && y - lift >= 0) t.px[y - lift][x] = c.px[y][x];
+            }
+        }
+        P(g, t);
+        l = L();
+        ln(l, 1, 23, 3 - f, 20, 'N');
+        ln(l, 2, 23, 4 - f, 20, 'N');
+        P(g, l);
+        ln(g, 0, 18, 0, 22, 'w');
+        g.pxs('w', 1, 17 + f);
+    }
+
+    private static void thieving2(Grid g, int st, int f)
+    {
+        Grid l = L();
+        if (st == 0)
+        {
+            ov(l, 8, 16, 9, 8, 'n');
+            rc(l, 10, 13, 5, 4, 'n');
+            rc(l, 9, 11, 7, 3, 'n');
+            shade(l, 'n', 'N', 'm');
+            P(g, l);
+            g.pxs('y', 11, 14, 12, 14, 13, 14);
+            return;
+        }
+        if (st == 2)
+        {
+            ov(l, 10, 1, 5, 6, 'y');
+            shade(l, 'y', 'Y', 'o');
+            P(g, l);
+            l = L();
+        }
+        ov(l, 4, 11, 16, 13, 'n');
+        rc(l, 5, 19, 14, 5, 'n');
+        rc(l, 9, 8, 6, 4, 'n');
+        rc(l, 7, 5, 10, 4, 'n');
+        shade(l, 'n', 'N', 'm');
+        P(g, l);
+        g.pxs('m', 8, 7, 11, 7, 14, 7);
+        g.pxs('y', 9, 10, 10, 10, 11, 10, 12, 10, 13, 10, 14, 10);
+        g.pxs('Y', 15, 10, 16, 11, 15, 12, 16, 13);
+        g.pxs('N', 7, 15, 7, 16, 8, 14);
+        if (st == 1)
+        {
+            l = L();
+            ov(l, 19, 21, 5, 3, 'y');
+            shade(l, 'y', 'Y', 'o');
+            P(g, l);
+            return;
+        }
+        l = L();
+        ov(l, 19, 21, 5, 3, 'y');
+        ov(l, 14, 22, 5, 2, 'y');
+        shade(l, 'y', 'Y', 'o');
+        P(g, l);
+        l = L();
+        l.stamp(0, 19, ".jjjjj.", "jjjjjjj", "jxxjxxj", ".jjjjj.");
+        P(g, l);
+        if (f == 0) g.pxs('w', 11, 3);
+        else sp(g, 12, 3, true, 'w', 'C');
+    }
+
+    private static void arrow2(Grid g, int bx, int tx, int ty, char fea, char fea2)
+    {
+        Grid l = L();
+        ln(l, bx, 12, tx, ty + 3, 'F');
+        ln(l, bx + 1, 12, tx + 1, ty + 3, 'F');
+        P(g, l);
+        l = L();
+        rc(l, tx - 1, ty, 4, 4, fea);
+        l.pxs(fea2, tx - 1, ty, tx, ty + 1, tx + 1, ty + 2, tx + 2, ty + 3);
+        P(g, l);
+    }
+
+    private static void fletching2(Grid g, int st, int f)
+    {
+        if (st == 0)
+        {
+            arrow2(g, 11, 11, 10, 'r', 'R');
+        }
+        else
+        {
+            arrow2(g, 9, 5, 3, 'r', 'R');
+            arrow2(g, 11, 11 + f, 0, 'x', 'w');
+            arrow2(g, 14, 16, 3, 'b', 'B');
+        }
+        Grid l = L();
+        rc(l, 8, st == 0 ? 15 : 11, 8, st == 0 ? 9 : 13, 'n');
+        shade(l, 'n', 'N', 'm');
+        P(g, l);
+        l = L();
+        rc(l, 7, st == 0 ? 14 : 10, 10, 2, 'F');
+        shade(l, 'F', 'x', 'N');
+        P(g, l);
+        if (st == 0) return;
+        ln(g, 8, 14, 15, 21, 'm');
+        g.pxs('Y', 11, 17, 12, 17, 11, 18, 12, 18);
+        if (st == 1) return;
+        l = L();
+        for (int k = 0; k < 2; k++)
+        {
+            ln(l, 20 - k, 3, 22 - k, 9, 'N');
+            ln(l, 22 - k, 9, 22 - k, 15, 'N');
+            ln(l, 22 - k, 15, 20 - k, 21, 'N');
+        }
+        P(g, l);
+        ln(g, 20, 4, 18, 7, 'w');
+        ln(g, 20, 20, 18, 17, 'w');
+        g.pxs('F', 22, 10, 22, 12);
+    }
 
     private static void woodcutting(Grid g, int st, int f)
     {
@@ -345,20 +499,22 @@ public final class SkillProps
             P(g, l);
             return;
         }
-        ov(l, 3, 17, 18, 7, 'e');
+        ov(l, 1, 17, 22, 7, 'e');
         shade(l, 'e', 'E', 'm');
         P(g, l);
+        g.pxs('m', 4, 20, 5, 20, 6, 20, 16, 21, 17, 21, 18, 21, 9, 22, 10, 22, 11, 22);
         l = L();
-        rc(l, 11, 7, 2, 11, '3');
-        ov(l, 1, 9, 11, 6, '1');
-        ov(l, 12, 9, 11, 6, '1');
-        ov(l, 3, 4, 9, 6, '1');
-        ov(l, 12, 4, 9, 6, '1');
-        ov(l, 7, 3, 10, 6, '1');
-        shade(l, '1', '2', '3');
+        rc(l, 11, 6, 2, 12, '3');
         P(g, l);
-        g.pxs('3', 6, 13, 7, 13, 17, 12, 13, 6);
-        g.pxs('2', 3, 11, 15, 8, 20, 11, 10, 5);
+        int[][] leaves = {{3, 14, 8, 4}, {13, 14, 8, 4}, {4, 9, 7, 4}, {13, 9, 7, 4}, {10, 4, 4, 6}};
+        for (int k = 0; k < leaves.length; k++)
+        {
+            int[] v = leaves[k];
+            l = L();
+            ov(l, v[0], v[1] + (k < 4 ? f * (k % 2 == 0 ? 1 : 0) : 0), v[2], v[3], '1');
+            shade(l, '1', '2', '3');
+            P(g, l);
+        }
         l = L();
         l.pxs('s', 12 + f, 1, 11 + f, 2, 13 + f, 2, 12 + f, 3);
         l.set(12 + f, 2, 'Y');
@@ -454,11 +610,12 @@ public final class SkillProps
         if (st == 1) return;
         int dy = f == 0 ? 0 : -2;
         l = L();
-        rc(l, 11, 5 + dy, 5, 5, 'i');
+        rc(l, 9, 5 + dy, 7, 5, 'i');
         shade(l, 'i', 'I', 'j');
-        rc(l, 16, 8 + dy, 6, 2, 'n');
+        rc(l, 16, 7 + dy, 7, 3, 'n');
         P(g, l);
-        g.pxs('N', 17, 8 + dy, 18, 8 + dy, 19, 8 + dy);
+        g.pxs('N', 17, 7 + dy, 18, 7 + dy, 19, 7 + dy, 20, 7 + dy);
+        g.pxs('T', 10, 6 + dy, 11, 6 + dy);
         if (f == 0)
         {
             g.pxs('A', 5, 7);
@@ -581,10 +738,11 @@ public final class SkillProps
         if (st == 1) return;
         // rod
         l = L();
-        ln(l, 22, 22, 17, 4, 'n');
+        ln(l, 22, 23, 17, 3, 'n');
+        ln(l, 23, 23, 18, 3, 'n');
         P(g, l);
-        g.pxs('N', 21, 19, 20, 14, 19, 9);
-        for (int y = 5; y < 15; y++) g.set(16 + (y > 12 ? 0 : 0), y, 'w');
+        ln(g, 22, 22, 17, 4, 'N');
+        for (int y = 4; y < 15; y++) g.set(16, y, 'w');
         g.pxs('r', 16, 15, 17, 15);
         g.pxs('w', 16, 16, 17, 16);
         // fish
@@ -899,10 +1057,12 @@ public final class SkillProps
         // hammer
         int hx = f == 0 ? 0 : -1;
         l = L();
-        ln(l, 21, 23, 21 + hx, 12, 'n');
-        rc(l, 18 + hx, 8, 5, 4, 'i');
+        ln(l, 21, 23, 21 + hx, 10, 'n');
+        ln(l, 22, 23, 22 + hx, 10, 'n');
+        rc(l, 18 + hx, 6, 6, 4, 'i');
         P(g, l);
-        g.pxs('I', 18 + hx, 8, 19 + hx, 8, 20 + hx, 8);
+        g.pxs('I', 18 + hx, 6, 19 + hx, 6, 20 + hx, 6, 21 + hx, 6);
+        for (int y = 11; y < 23; y += 3) g.set(21, y, 'N');
         if (f == 0) g.pxs('x', 12, 1, 13, 0);
         else g.pxs('x', 13, 1, 12, 0, 14, 0);
     }

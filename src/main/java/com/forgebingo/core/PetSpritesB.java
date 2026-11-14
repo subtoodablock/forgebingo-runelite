@@ -75,6 +75,9 @@ public final class PetSpritesB
             case 'Y': return 0xfff48a;
             case 'e': return 0xe6dcc4; // bone/cream
             case 'E': return 0xb0a488;
+            case 'K': return 0x1f4a24; // far wing: dark green
+            case 'L': return 0x14525c; // far wing: dark teal
+            case 'N': return 0x2e7a56; // far wing tips
             case 'w': return 0x6a4a28; // wood/hoof
             case 'W': return 0x3e2a14;
             default: return 0xff00ff;
@@ -440,28 +443,33 @@ public final class PetSpritesB
         int hd = f;
         Grid tail = stroke('r', 3, 2, 33, 16, 35, 14 - f, 36, 12 - f);
         part(g, tail);
-        legs4(g, new int[] {10, 14, 27, 31}, 25, 3, 'r', 'W', f);
+        legs4(g, new int[] {11, 15, 27, 31}, 25, 2, 'r', 'W', f);
         part(g, bevel(oval(11, 14, 25, 13, 'r'), 'j', 'R'));
         part(g, bevel(oval(15, 21, 15, 5, 't'), 'T', 's'));
         g.pxs('R', 18, 17, 25, 16, 30, 18, 22, 18);
         // neck
-        part(g, bevel(oval(7, 11, 11, 13, 'r'), 'j', 'R'));
-        // big ram horns: thick at the base, curling back and down, ridged and shaded
-        Grid horn = stroke('e', 4, 1.5, 11, 12 + hd, 9, 6 + hd, 14, 2 + hd, 21, 3 + hd, 26, 7 + hd, 27, 11 + hd);
+        part(g, bevel(oval(8, 11, 10, 13, 'r'), 'j', 'R'));
+        // two ram horns, thick at the base, sweeping back and curling down in a tight C; ridged, with a highlight
+        Grid horn = stroke('e', 4, 2, 11, 11 + hd, 12, 6 + hd, 17, 3 + hd, 22, 6 + hd, 22, 10 + hd, 19, 12 + hd);
         bevel(horn, 'x', 'E');
-        for (int[] r : new int[][] {{9, 8}, {11, 4}, {16, 2}, {22, 4}, {25, 6}}) horn.set(r[0], r[1] + hd, 'E');
+        for (int[] r : new int[][] {{12, 7}, {15, 4}, {20, 4}, {22, 8}}) horn.pxs('E', r[0], r[1] + hd, r[0] + 1, r[1] + 1 + hd);
         part(g, horn);
-        // goat head: tan muzzle, nostril, small mouth
-        part(g, bevel(oval(4, 9 + hd, 11, 12, 'r'), 'j', 'R'));
-        part(g, bevel(oval(1, 14 + hd, 9, 8, 't'), 'T', 's'));
-        g.pxs('z', 1, 16 + hd, 2, 16 + hd, 1, 17 + hd);
-        g.pxs('R', 3, 20 + hd, 4, 20 + hd, 5, 19 + hd);
-        // sideways ear, eye with slit pupil
-        part(g, bevel(oval(12, 12 + hd, 7, 3, 'R'), 'r', 'W'));
-        g.pxs('y', 7, 13 + hd, 8, 13 + hd).pxs('z', 8, 13 + hd).pxs('z', 8, 14 + hd);
+        // goat head: round skull, long narrow muzzle sloping down to a small pale nose
+        part(g, bevel(stroke('r', 9, 4, 11, 12 + hd, 8, 16 + hd, 4, 21 + hd), 'j', 'R'));
+        part(g, bevel(stroke('t', 3, 3, 6, 19 + hd, 3, 21 + hd), 'T', 's'));
+        part(g, bevel(oval(1, 20 + hd, 4, 3, 'T'), 'x', 's'));
+        g.pxs('z', 1, 21 + hd, 2, 21 + hd);
+        g.pxs('R', 5, 22 + hd, 6, 22 + hd);
+        // eye set high with a horizontal slit pupil, and a sideways leaf-shaped ear
+        g.pxs('R', 8, 11 + hd, 9, 11 + hd, 10, 11 + hd);
+        g.pxs('y', 8, 12 + hd, 11, 12 + hd).pxs('z', 9, 12 + hd, 10, 12 + hd);
+        Grid ear = ellipseRot(16.5, 13.5 + hd, 4.2, 1.7, -12, 'r');
+        bevel(ear, 'j', 'R');
+        part(g, ear);
+        g.pxs('R', 14, 13 + hd, 15, 13 + hd, 16, 13 + hd);
         // pointed goatee
         Grid beard = new Grid();
-        beard.stamp(3, 21 + hd, "eee", "xee", ".ee", ".Ee", "..E");
+        beard.stamp(4, 22 + hd, "ee", "xe", ".e", ".E");
         part(g, beard);
         return g;
     }
@@ -479,20 +487,21 @@ public final class PetSpritesB
         g.pxs('n', 27, 30, 29, 29, 25, 26, 22, 24, 24, 21);
         // neck: stacked rows that lean with the wobble, with ring lines
         Grid neck = new Grid();
-        for (int y = 8; y <= 19; y++)
+        for (int y = 10; y <= 19; y++)
         {
-            int ox = (int) Math.round(f * (19 - y) / 11.0);
+            int ox = (int) Math.round(f * (19 - y) / 8.0);
             for (int x = 19; x < 23; x++) neck.set(x + ox, y, y % 3 == 0 ? 'n' : (x == 19 ? 'M' : (x >= 22 ? 'n' : 'm')));
         }
         part(g, neck);
         int nx = 19 + f;
         // head with snout, eye, red three-spike crest
-        part(g, bevel(oval(nx - 4, 4, 11, 8, 'm'), 'M', 'n'));
+        part(g, bevel(oval(nx - 4, 3, 10, 8, 'm'), 'M', 'n'));
         Grid crest = new Grid();
-        crest.stamp(nx - 2, 0, "a.a.a", "aAaAa", ".aaa.");
+        crest.stamp(nx - 1, 0, "a.a.a", "aAaAa", "yyyyy");
         part(g, crest);
-        g.pxs('z', nx - 2, 7, nx - 1, 7, nx - 2, 8, nx - 1, 8).pxs('x', nx - 2, 7);
-        g.pxs('A', nx - 3, 10, nx - 2, 10);
+        g.pxs('z', nx - 2, 6, nx + 1, 6);
+        g.pxs('A', nx - 3, 8, nx + 2, 8);
+        g.pxs('M', nx - 2, 4, nx - 1, 4);
         return g;
     }
 
@@ -564,9 +573,10 @@ public final class PetSpritesB
                 double t = u / len;
                 boolean low = v > hw - 1.0;
                 char c;
-                if (t < 0.4) c = far ? 'H' : (low ? 'H' : (v < -0.8 ? 'G' : 'g'));
-                else if (t < 0.7) c = far ? 'd' : (low ? 'd' : (v < -0.8 ? 'B' : 'b'));
-                else c = far ? 'Q' : (low ? 'o' : (v < 0 ? 'Y' : 'y'));
+                if (far) c = t < 0.4 ? 'K' : (t < 0.7 ? 'L' : (low ? 'K' : 'N'));
+                else if (t < 0.4) c = low ? 'H' : (v < -0.8 ? 'G' : 'g');
+                else if (t < 0.7) c = low ? 'd' : (v < -0.8 ? 'B' : 'b');
+                else c = low ? 'o' : (v < 0 ? 'Y' : 'y');
                 m.set(x, y, c);
             }
         }

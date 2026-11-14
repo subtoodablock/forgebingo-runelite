@@ -73,6 +73,13 @@ final class PanelImps extends LayerUI<JComponent>
         int variant;
         /** where a flier is heading */
         float tx, ty;
+        /** a rare visitor, and how long it still stays */
+        boolean guest;
+        float guestT;
+        /** popping out (-1) or in (1), how far along (0..1), and who it becomes when it has popped out */
+        int popDir;
+        float pop;
+        boolean nextGuest;
         float sparkX, sparkY;
         Rectangle last;
     }
@@ -113,8 +120,11 @@ final class PanelImps extends LayerUI<JComponent>
     private final ThemeFx fx = new ThemeFx();
     private int lastMouseX;
 
-    /** PanelTheme.RARE_CHANCE; the preview turns it up so the rare bosses can be seen */
-    float rareChance = PanelTheme.RARE_CHANCE;
+    /** seconds until the theme next rolls for a rare visitor (the previews shorten it) */
+    float rollT = PanelTheme.ROLL_SECONDS;
+    /** the odds a roll brings a visitor; below 0 = the usual PanelTheme.ROLL_CHANCE (the previews set 1) */
+    float rollChance = -1f;
+    private static final float POP_TIME = 0.45f;
 
     private boolean fxOn()
     {
@@ -128,6 +138,7 @@ final class PanelImps extends LayerUI<JComponent>
         imps.clear();
         clearDrops();
         fx.reset();
+        rollT = PanelTheme.ROLL_SECONDS;
         nextDrop = 2f;
         sync();
         if (layer != null) layer.repaint();
@@ -350,43 +361,144 @@ final class PanelImps extends LayerUI<JComponent>
         m.life = rnd(150, 400);
         m.spark = rnd(2, 6);
         m.bubble = "";
-        // the cast member there are fewest of right now, so a theme's creatures all turn up
+        m.guest = false;
+        m.guestT = 0;
+        m.popDir = 0;
+        m.pop = 0;
+        dress(m, false);
+    }
+
+    /**
+     * Who this walker is. A regular is one of the theme's everyday cast (the one there are fewest of right now);
+     * a visitor is one of its rare ones. Returns false when the theme has no visitor to offer.
+     */
+    private boolean dress(Imp m, boolean visitor)
+    {
+        m.hat = ImpSprite.Hat.NONE;
+        m.item = ImpSprite.Item.NONE;
+        m.rare = false;
         Critter[] cast = theme.cast;
         Critter pick = cast[0];
-        int fewest = Integer.MAX_VALUE;
-        int start = rnd.nextInt(cast.length);
-        for (int i = 0; i < cast.length; i++)
+        if (visitor && theme == PanelTheme.BARROWS)
         {
-            Critter c = cast[(start + i) % cast.length];
-            int n = 0;
-            for (Imp o : imps) if (o != m && o.kind == c) n++;
-            if (n < fewest) { fewest = n; pick = c; }
+            // the six brothers take turns: one that is not out right now
+            List<Critter> away = new ArrayList<>();
+            for (Critter c : cast)
+            {
+                boolean here = false;
+                for (Imp o : imps) if (o.kind == c) here = true;
+                if (!here) away.add(c);
+            }
+            if (away.isEmpty()) return false;
+            pick = away.get(rnd.nextInt(away.size()));
         }
-        // once in a great while a boss walks in instead
-        Critter[] rare = theme.rare();
-        if (rare.length > 0 && rnd.nextFloat() < rareChance) pick = rare[rnd.nextInt(rare.length)];
-        m.kind = pick;
-        m.variant = rnd.nextInt(pick.variants);
+        else if (visitor && theme.rare().length > 0)
+        {
+            Critter[] rare = theme.rare();
+            pick = rare[rnd.nextInt(rare.length)];
+        }
+        else
+        {
+            int fewest = Integer.MAX_VALUE;
+            int start = rnd.nextInt(cast.length);
+            for (int i = 0; i < cast.length; i++)
+            {
+                Critter c = cast[(start + i) % cast.length];
+                int n = 0;
+                for (Imp o : imps) if (o != m && o.kind == c) n++;
+                if (n < fewest) { fewest = n; pick = c; }
+            }
+        }
         if (pick == Critter.PET)
         {
-            // which pet: drawn by rarity, and not one that is already here if that can be helped
+            // everyday pets are the common and uncommon ones; a visitor is a rare, epic or legendary one
+            java.util.function.Predicate<Pet> tier = p -> PetSprites.drawn(p)
+                && (p.rarity.ordinal() >= Pet.Rarity.RARE.ordinal()) == visitor;
             Pet pet = null;
             for (int tries = 0; tries < 6; tries++)
             {
-                pet = Pet.pick(rnd.nextDouble(), PetSprites::drawn);
+                pet = Pet.pick(rnd.nextDouble(), tier);
                 if (pet == null) break;
                 boolean here = false;
                 for (Imp o : imps) if (o != m && o.kind == Critter.PET && o.variant == pet.ordinal()) here = true;
                 if (!here) break;
             }
+            if (pet == null && visitor) return false;
+            m.kind = pick;
             m.variant = pet == null ? 0 : pet.ordinal();
+            return true;
         }
-        if (pick == Critter.IMP) rollLook(m);
-        else
+        m.kind = pick;
+        m.variant = rnd.nextInt(pick.variants);
+        if (pick == Critter.IMP && visitor)
         {
-            m.hat = ImpSprite.Hat.NONE;
-            m.item = ImpSprite.Item.NONE;
-            m.rare = false;
+            // the Classic visitor: an imp in a hat or carrying something famous
+            for (int tries = 0; tries < 400 && !m.rare; tries++) rollLook(m);
+            if (!m.rare)
+            {
+                m.hat = ImpSprite.Hat.WIZARD;
+                m.rare = true;
+            }
+        }
+        return true;
+    }
+
+    /** The five-minute roll: maybe one regular pops out and a rare visitor pops in for a little while. */
+    private void roll()
+    {
+        for (Imp o : imps) if (o.guest || o.popDir != 0) return; // one visitor at a time
+        float chance = theme == PanelTheme.BARROWS ? 1f : rollChance >= 0 ? rollChance : PanelTheme.ROLL_CHANCE;
+        if (rnd.nextFloat() >= chance) return;
+        List<Imp> ok = new ArrayList<>();
+        for (Imp o : imps) if (o.mode != Mode.AIR || o.kind.flies()) ok.add(o);
+        if (ok.isEmpty()) return;
+        Imp m = ok.get(rnd.nextInt(ok.size()));
+        m.nextGuest = true;
+        m.popDir = -1;
+        m.pop = 0;
+    }
+
+    /** Pops play out; a visitor whose time is up pops out again and the regular comes back. */
+    private void stepVisitors(float dt)
+    {
+        rollT -= dt;
+        if (rollT <= 0)
+        {
+            rollT = PanelTheme.ROLL_SECONDS;
+            roll();
+        }
+        for (Imp m : imps)
+        {
+            if (m.popDir != 0)
+            {
+                m.pop += dt / POP_TIME;
+                if (m.pop < 1) continue;
+                if (m.popDir == 1)
+                {
+                    m.popDir = 0;
+                    continue;
+                }
+                // out of sight: change who it is, then pop back in
+                boolean came = dress(m, m.nextGuest);
+                if (!came) dress(m, false);
+                // Barrows brothers just take turns; everywhere else the visitor leaves again
+                m.guest = came && m.nextGuest && theme != PanelTheme.BARROWS;
+                m.guestT = m.guest ? rnd(PanelTheme.VISIT_MIN, PanelTheme.VISIT_MAX) : 0;
+                m.life = Math.max(m.life, PanelTheme.VISIT_MAX + 30f);
+                m.popDir = 1;
+                m.pop = 0;
+            }
+            else if (m.guest)
+            {
+                m.guestT -= dt;
+                if (m.guestT <= 0)
+                {
+                    m.guest = false;
+                    m.nextGuest = false;
+                    m.popDir = -1;
+                    m.pop = 0;
+                }
+            }
         }
     }
 
@@ -701,6 +813,7 @@ final class PanelImps extends LayerUI<JComponent>
             imps.add(m);
         }
         for (Imp m : imps) step(m, dt);
+        stepVisitors(dt);
         // hanging out: two imps that meet stop for a chat
         for (int i = 0; i < imps.size(); i++)
         {
@@ -980,8 +1093,38 @@ final class PanelImps extends LayerUI<JComponent>
             g.fill(new Ellipse2D.Float(x - 8, y - 2, 16, 3.5f));
         }
 
+        if (m.popDir != 0)
+        {
+            // a puff where it pops: a ring that opens and a few sparkles
+            float k = Math.max(0f, Math.min(1f, m.pop));
+            float open = m.popDir == -1 ? k : 1 - k;
+            int a = Math.round(200 * (1 - Math.abs(open - 0.5f) * 1.6f));
+            if (a > 0)
+            {
+                float r = 5 + open * 13;
+                g.setColor(new Color(255, 236, 170, Math.min(255, a)));
+                g.setStroke(new java.awt.BasicStroke(1.6f));
+                g.draw(new Ellipse2D.Float(x - r, y - 13 - r, r * 2, r * 2));
+                for (int i = 0; i < 6; i++)
+                {
+                    double ang = i * Math.PI / 3 + 0.4;
+                    float sx = x + (float) Math.cos(ang) * (r + 4);
+                    float sy = y - 13 + (float) Math.sin(ang) * (r + 4);
+                    g.fillRect(Math.round(sx) - 1, Math.round(sy), 3, 1);
+                    g.fillRect(Math.round(sx), Math.round(sy) - 1, 1, 3);
+                }
+            }
+        }
         AffineTransform old = g.getTransform();
         g.translate(x, y);
+        if (m.popDir != 0)
+        {
+            // shrinks to nothing going out; springs in a little too big and settles coming in
+            float k = Math.max(0f, Math.min(1f, m.pop));
+            float sc = m.popDir == -1 ? 1 - k * k : (float) (1 + 0.25 * Math.sin(k * Math.PI)) * Math.min(1f, k * 1.6f);
+            g.translate(0, -12 * (1 - sc));
+            g.scale(Math.max(0.02f, sc), Math.max(0.02f, sc));
+        }
         if (m.mode == Mode.CLIMB)
         {
             // feet against the panel's edge, head pointing inward
