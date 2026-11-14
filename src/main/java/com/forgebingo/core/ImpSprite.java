@@ -298,6 +298,11 @@ public final class ImpSprite
         // torso
         part(g, shape(12, 20, "rrrrrd", "rhrrrd", "rrrrrd", "rrrrdd", "drrrdd"));
 
+        // the tail's root: the leg and torso outlines above cut it off, which left the tail floating beside the
+        // feet like stray marks. Painted again here so the tail always joins the hip.
+        g.pxs('r', 0, 18, 23, 18, 24, 19, 24, 19, 25);
+        g.pxs('d', 0, 20, 24);
+
         // ears and horns go behind the head so its outline overlaps their roots
         part(g, shape(6, 11, "r...", "rr..", "rdr.", ".rrr"));
         part(g, shape(20, 11, "...r", "..rr", ".rdr", "rrr."));
