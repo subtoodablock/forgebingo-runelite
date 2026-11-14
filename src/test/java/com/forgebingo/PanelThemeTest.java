@@ -71,7 +71,7 @@ public class PanelThemeTest
         BufferedImage imp = CritterSprite.image(Critter.IMP, 0, 0);
         for (Critter c : Critter.values())
         {
-            if (c == Critter.IMP) continue;
+            if (c == Critter.IMP || c == Critter.PET) continue; // pets have their own pictures (PetSprites)
             assertTrue(c + " is still drawn as the imp", differs(imp, CritterSprite.image(c, 0, 0)));
         }
         for (Critter.Fall f : Critter.Fall.values()) assertNotNull(f.name(), CritterSprite.fall(f, 0));

@@ -54,7 +54,7 @@ you don't walk where you click; it closes by itself when a monster attacks you (
 - **Connection:** API base URL (leave as default), API key
 - **Events to send:** NPC drops; raids, chests and clues; collection log slots; pets; kill counts; level-ups
 - **Screenshots:** include sidebar in screenshots (on). A screenshot is always sent with a matched drop
-- **Theme:** Classic, Theatre of Blood, Chambers of Xeric, Tombs of Amascut, Barrows or Inferno. Each has its own
+- **Theme:** Classic, Theatre of Blood, Chambers of Xeric, Tombs of Amascut, Barrows, Inferno or Skilling (all 72 pets). Each has its own
   colours, little creatures that wander over the side panel, and things that fall down it
 - **Celebrations** and **chat notices**
 - **Board overlay:** hotkey, close when attacked, animations

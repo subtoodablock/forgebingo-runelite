@@ -166,11 +166,131 @@ final class PanelUi
     {
         Graphics2D g2 = (Graphics2D) g.create();
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-        // letters sit on whole pixels, so small text stays sharp (owner, 2026-11-14)
-        g2.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_OFF);
         g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+        textHints(g2);
         return g2;
+    }
+
+    private static volatile java.util.Map<?, ?> desktopHints;
+    private static volatile boolean desktopHintsRead;
+
+    /**
+     * Text drawn the way this computer draws its own text (owner, 2026-11-14): the system's font smoothing, which
+     * on most Windows screens is the sharper sub-pixel kind (ClearType), instead of plain grey smoothing. Falls
+     * back to grey smoothing when the system gives no answer. Letters sit on whole pixels so small text stays sharp.
+     */
+    static void textHints(Graphics2D g2)
+    {
+        if (!desktopHintsRead)
+        {
+            try
+            {
+                Object h = java.awt.Toolkit.getDefaultToolkit().getDesktopProperty("awt.font.desktophints");
+                if (h instanceof java.util.Map) desktopHints = (java.util.Map<?, ?>) h;
+            }
+            catch (RuntimeException | LinkageError e)
+            {
+                desktopHints = null;
+            }
+            desktopHintsRead = true;
+        }
+        g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        java.util.Map<?, ?> h = desktopHints;
+        if (h != null)
+        {
+            Object aa = h.get(RenderingHints.KEY_TEXT_ANTIALIASING);
+            // "off" or "default" would bring back jagged letters: keep ours unless the system asks for a smooth kind
+            if (aa != null && aa != RenderingHints.VALUE_TEXT_ANTIALIAS_OFF && aa != RenderingHints.VALUE_TEXT_ANTIALIAS_DEFAULT)
+            {
+                g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, aa);
+                Object contrast = h.get(RenderingHints.KEY_TEXT_LCD_CONTRAST);
+                if (contrast != null) g2.setRenderingHint(RenderingHints.KEY_TEXT_LCD_CONTRAST, contrast);
+            }
+        }
+        g2.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_OFF);
+    }
+
+    /**
+     * The panel's ordinary text: a label drawn with the smoothing above and a soft one-pixel shadow under the
+     * letters, like the game's own text, so it stays readable on every theme's cards. The shadow is drawn once and
+     * kept until the text, size or font changes.
+     */
+    static class CrispLabel extends JLabel
+    {
+        private java.awt.image.BufferedImage shadow;
+        private String shadowKey;
+
+        CrispLabel()
+        {
+            super();
+        }
+
+        CrispLabel(String text)
+        {
+            super(text);
+        }
+
+        CrispLabel(javax.swing.Icon icon)
+        {
+            super(icon);
+        }
+
+        @Override
+        protected void paintComponent(Graphics g)
+        {
+            Graphics2D g2 = (Graphics2D) g.create();
+            try
+            {
+                textHints(g2);
+                String text = getText();
+                int w = getWidth();
+                int h = getHeight();
+                if (getIcon() == null && text != null && !text.trim().isEmpty() && w > 0 && h > 0 && w * h < 400_000)
+                {
+                    // drawn at the screen's own scale (a 150% or 200% display), or the shadow would not line up
+                    double sc = Math.max(1.0, Math.min(4.0, g2.getTransform().getScaleX()));
+                    String key = text + '|' + w + '|' + h + '|' + getFont() + '|' + isEnabled() + '|' + sc;
+                    if (shadow == null || !key.equals(shadowKey))
+                    {
+                        // the label's own letters, turned black
+                        java.awt.image.BufferedImage img = new java.awt.image.BufferedImage((int) Math.ceil(w * sc), (int) Math.ceil(h * sc),
+                            java.awt.image.BufferedImage.TYPE_INT_ARGB);
+                        Graphics2D s = img.createGraphics();
+                        try
+                        {
+                            s.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                            s.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_OFF);
+                            s.scale(sc, sc);
+                            s.setClip(0, 0, w, h); // wrapped (HTML) text will not paint without a clip
+                            super.paintComponent(s);
+                            s.setComposite(AlphaComposite.SrcIn);
+                            s.setColor(Color.BLACK);
+                            s.fillRect(0, 0, w + 1, h + 1);
+                        }
+                        finally
+                        {
+                            s.dispose();
+                        }
+                        shadow = img;
+                        shadowKey = key;
+                    }
+                    java.awt.Composite old = g2.getComposite();
+                    g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.62f));
+                    g2.drawImage(shadow, 1, 1, w, h, null);
+                    g2.setComposite(old);
+                }
+                else
+                {
+                    shadow = null;
+                    shadowKey = null;
+                }
+                super.paintComponent(g2);
+            }
+            finally
+            {
+                g2.dispose();
+            }
+        }
     }
 
     static Color mix(Color a, Color b, float t)

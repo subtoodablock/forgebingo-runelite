@@ -45,7 +45,17 @@ public enum PanelTheme
         new Critter.Fall[] {Critter.Fall.EMBER},
         // the TzHaar's obsidian weapons from Karamja, and the two capes
         new int[] {6522 /* toktz-xil-ul */, 6523 /* toktz-xil-ak */, 6524 /* toktz-ket-xil */, 6525 /* toktz-xil-ek */, 6526 /* toktz-mej-tal */,
-            6527 /* tzhaar-ket-em */, 6528 /* tzhaar-ket-om */, 6568 /* obsidian cape */, 6570 /* fire cape */, 21295 /* infernal cape */}, false);
+            6527 /* tzhaar-ket-em */, 6528 /* tzhaar-ket-om */, 6568 /* obsidian cape */, 6570 /* fire cape */, 21295 /* infernal cape */}, false),
+
+    // Skilling (owner, 2026-11-14): forest green and worn wood; the game's pets wander about, each as rare as it
+    // deserves (Pet.Rarity), and what falls is what you gather: logs, ore, fish, herbs, runes and the dragon tools.
+    SKILLING("Skilling (pets)",
+        new int[] {0x141a12, 0x2f3b27, 0x1f281b, 0x566a40, 0x12170f, 0x3b4a2d, 0xffd866, 0xe8c766, 0x9a7a2a, 0x6cc4f5, 0xe8ecd9, 0x9aa58a},
+        new Critter[] {Critter.PET}, 5, new Critter.Fall[0],
+        new int[] {1511 /* logs */, 1521 /* oak */, 1519 /* willow */, 1515 /* yew */, 1513 /* magic */, 377 /* raw lobster */,
+            371 /* raw swordfish */, 383 /* raw shark */, 453 /* coal */, 444 /* gold ore */, 451 /* runite ore */, 1617 /* uncut diamond */,
+            1631 /* uncut dragonstone */, 207 /* grimy ranarr */, 561 /* nature rune */, 563 /* law rune */, 11920 /* dragon pickaxe */,
+            6739 /* dragon axe */, 11849 /* mark of grace */}, false);
 
     private final String label;
     final int[] palette;

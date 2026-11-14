@@ -1,5 +1,8 @@
 package com.forgebingo;
 
+import com.forgebingo.core.SkillProp;
+import com.forgebingo.core.SkillProps;
+import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Graphics2D;
@@ -167,13 +170,28 @@ final class ThemeFx
         float next, erupt, dripT;
     }
 
+    /** A skill's little prop standing on a card (Skilling theme): it grows in, stays a while and fades. */
+    private static final class Prop
+    {
+        SkillProp skill;
+        int x, y, l, r;
+        float age, life;
+    }
+
+    private static final int MAX_PROPS = 5;
+    private static final float GROW = 0.55f;
+    private static final float FADE = 0.9f;
+    private final List<Prop> props = new ArrayList<>();
+    private float nextProp = 1.5f;
+    private SkillProp lastSkill;
+
     private final List<Pile> piles = new ArrayList<>();
     private final List<Volcano> volcanoes = new ArrayList<>();
     private float spawn;
 
     static boolean moving(PanelTheme t)
     {
-        return t == PanelTheme.AMASCUT || t == PanelTheme.INFERNO;
+        return t == PanelTheme.AMASCUT || t == PanelTheme.INFERNO || t == PanelTheme.SKILLING;
     }
 
     void reset()
@@ -181,11 +199,12 @@ final class ThemeFx
         bits.clear();
         piles.clear();
         volcanoes.clear();
+        props.clear();
     }
 
     boolean isEmpty()
     {
-        return bits.isEmpty() && piles.isEmpty() && volcanoes.isEmpty();
+        return bits.isEmpty() && piles.isEmpty() && volcanoes.isEmpty() && props.isEmpty();
     }
 
     private static boolean onPlat(List<int[]> plats, int l, int r, int y)
@@ -200,6 +219,8 @@ final class ThemeFx
         else piles.clear();
         if (theme == PanelTheme.INFERNO) stepLava(dt, plats, view, rnd);
         else volcanoes.clear();
+        if (theme == PanelTheme.SKILLING) stepProps(dt, plats, view, rnd);
+        else props.clear();
         // everything loose: fall, drift, fade
         for (int i = bits.size() - 1; i >= 0; i--)
         {
@@ -228,6 +249,69 @@ final class ThemeFx
             }
             if (gone) bits.remove(i);
         }
+    }
+
+    // ---- skill props
+
+    private void stepProps(float dt, List<int[]> plats, Rectangle view, Random rnd)
+    {
+        for (int i = props.size() - 1; i >= 0; i--)
+        {
+            Prop p = props.get(i);
+            p.age += dt;
+            if (p.age >= p.life || !onPlat(plats, p.l, p.r, p.y)) props.remove(i);
+        }
+        nextProp -= dt;
+        if (nextProp > 0 || props.size() >= MAX_PROPS) return;
+        nextProp = 1.6f + rnd.nextFloat() * 2.6f;
+        // a card you can see, with room for it away from the other props
+        List<int[]> ok = new ArrayList<>();
+        for (int[] p : plats)
+        {
+            if (p[1] - p[0] < 80 || p[2] < view.y + 26 || p[2] > view.y + view.height - 8) continue;
+            ok.add(p);
+        }
+        if (ok.isEmpty()) return;
+        int[] plat = ok.get(rnd.nextInt(ok.size()));
+        int x = plat[0] + 18 + rnd.nextInt(Math.max(1, plat[1] - plat[0] - 36));
+        for (Prop o : props) if (o.y == plat[2] && Math.abs(o.x - x) < 34) return;
+        // a skill that is not standing somewhere already, and not the one before
+        SkillProp[] all = SkillProp.values();
+        SkillProp skill = null;
+        for (int tries = 0; tries < 12 && skill == null; tries++)
+        {
+            SkillProp c = all[rnd.nextInt(all.length)];
+            if (c == lastSkill || SkillProps.image(c, 2, 0) == null) continue;
+            boolean here = false;
+            for (Prop o : props) if (o.skill == c) here = true;
+            if (!here) skill = c;
+        }
+        if (skill == null) return;
+        Prop p = new Prop();
+        p.skill = skill;
+        p.x = x;
+        p.y = plat[2];
+        p.l = plat[0];
+        p.r = plat[1];
+        p.life = 9f + rnd.nextFloat() * 7f;
+        props.add(p);
+        lastSkill = skill;
+    }
+
+    private void paintProp(Graphics2D g, Prop p, float clock)
+    {
+        int stage = p.age < GROW ? 0 : p.age < GROW * 2 ? 1 : 2;
+        java.awt.image.BufferedImage img = SkillProps.image(p.skill, stage, ((int) (clock * 3f + p.x)) % 2);
+        if (img == null) return;
+        float left = p.life - p.age;
+        float alpha = left < FADE ? Math.max(0f, left / FADE) : 1f;
+        // a small hop as each stage arrives, so it reads as growing
+        float inStage = p.age < GROW * 2 ? (p.age % GROW) / GROW : 1f;
+        int hop = inStage < 0.35f && p.age < GROW * 3 ? -1 : 0;
+        java.awt.Composite old = g.getComposite();
+        if (alpha < 1f) g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
+        g.drawImage(img, p.x - img.getWidth() / 2, p.y - img.getHeight() + 1 + hop, null);
+        g.setComposite(old);
     }
 
     // ---- sand
@@ -384,6 +468,7 @@ final class ThemeFx
 
     void paint(Graphics2D g, float clock)
     {
+        for (Prop p : props) paintProp(g, p, clock);
         for (Volcano v : volcanoes) paintVolcano(g, v, clock);
         for (Pile p : piles) paintPile(g, p);
         for (float[] b : bits)

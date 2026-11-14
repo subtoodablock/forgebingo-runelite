@@ -202,13 +202,13 @@ class ForgeBingoPanel extends PluginPanel
 
     private final ForgeBingoPlugin plugin;
     private final ApiClient api;
-    private final JLabel status = new JLabel("Not connected");
-    private final JLabel scope = new JLabel(" ");
+    private final JLabel status = new PanelUi.CrispLabel("Not connected");
+    private final JLabel scope = new PanelUi.CrispLabel(" ");
     /** Verified RSN / name mismatch / revoked key, one card per line (from POST /v1/hello). */
     private final JPanel identity = column();
-    private final JLabel queueLabel = new JLabel(" ");
-    private final JLabel teamLabel = new JLabel(" ");
-    private final JLabel eventLabel = new JLabel(" ");
+    private final JLabel queueLabel = new PanelUi.CrispLabel(" ");
+    private final JLabel teamLabel = new PanelUi.CrispLabel(" ");
+    private final JLabel eventLabel = new PanelUi.CrispLabel(" ");
     private final PanelUi.GoldBar tilesBar = new PanelUi.GoldBar();
     private final PanelUi.Card boardCard = new PanelUi.Card(null);
     private final PanelUi.StatusDot statusDot = new PanelUi.StatusDot();
@@ -400,7 +400,7 @@ class ForgeBingoPanel extends PluginPanel
         return new Dimension(PluginPanel.PANEL_WIDTH, super.getPreferredSize().height);
     }
 
-    private final JLabel headToggle = new JLabel("Hide");
+    private final JLabel headToggle = new PanelUi.CrispLabel("Hide");
     private final Component identityGap = gap(6);
     private boolean headerCollapsed;
 
@@ -692,11 +692,11 @@ class ForgeBingoPanel extends PluginPanel
         // title row: name (gold) with a small close cross on the right
         JPanel head = new JPanel(new BorderLayout(6, 0));
         head.setOpaque(false);
-        JLabel title = new JLabel(wrapHtml(TileInfo.shownTitle(t), CARD_TEXT - 22));
+        JLabel title = new PanelUi.CrispLabel(wrapHtml(TileInfo.shownTitle(t), CARD_TEXT - 22));
         title.setFont(headFontFor(TileInfo.shownTitle(t)));
         title.setForeground(GOLD);
         head.add(title, BorderLayout.CENTER);
-        JLabel close = new JLabel("x");
+        JLabel close = new PanelUi.CrispLabel("x");
         close.setFont(boldFont());
         close.setForeground(MUTED);
         close.setVerticalAlignment(SwingConstants.TOP);
@@ -734,7 +734,7 @@ class ForgeBingoPanel extends PluginPanel
         stateRow.add(cardText(state, stateTextColour(t), CARD_TEXT - 40), BorderLayout.CENTER);
         if (!secret)
         {
-            JLabel pts = new JLabel(BoardOverlay.points(TileInfo.worth(t)));
+            JLabel pts = new PanelUi.CrispLabel(BoardOverlay.points(TileInfo.worth(t)));
             pts.setFont(smallFont());
             pts.setForeground(GOLD);
             pts.setVerticalAlignment(SwingConstants.TOP);
@@ -907,7 +907,7 @@ class ForgeBingoPanel extends PluginPanel
     /** "REQUIREMENTS" / "PROOF": small gold capitals, like the website's section labels. */
     private static JLabel smallCaps(String text)
     {
-        JLabel l = new JLabel(text.toUpperCase());
+        JLabel l = new PanelUi.CrispLabel(text.toUpperCase());
         l.setFont(capsFont());
         l.setForeground(new Color(0xc8a35a));
         return l;
@@ -916,7 +916,7 @@ class ForgeBingoPanel extends PluginPanel
     /** An item's icon at px size (fills in when the sprite loads); blank when there is no item manager yet. */
     private JLabel itemIcon(int itemId, int px)
     {
-        JLabel l = new JLabel();
+        JLabel l = new PanelUi.CrispLabel();
         l.setPreferredSize(new Dimension(px, px));
         l.setMinimumSize(new Dimension(px, px));
         if (lastItemManager == null) return l;
@@ -952,23 +952,23 @@ class ForgeBingoPanel extends PluginPanel
         if (taskPic != null) iconBox.add(itemIcon(taskPic, 22), BorderLayout.CENTER);
         else if (tilePic != null)
         {
-            JLabel pic = new JLabel(new ImageIcon(fit(tilePic, 22)));
+            JLabel pic = new PanelUi.CrispLabel(new ImageIcon(fit(tilePic, 22)));
             pic.setHorizontalAlignment(SwingConstants.CENTER);
             iconBox.add(pic, BorderLayout.CENTER);
         }
         else
         {
-            JLabel tick = new JLabel(done ? BOX_ON : BOX_OFF);
+            JLabel tick = new PanelUi.CrispLabel(done ? BOX_ON : BOX_OFF);
             tick.setHorizontalAlignment(SwingConstants.CENTER);
             iconBox.add(tick, BorderLayout.CENTER);
         }
         top.add(iconBox, BorderLayout.WEST);
-        JLabel name = new JLabel(wrapHtml(k.description == null || k.description.isEmpty() ? "Task" : k.description, CARD_TEXT - 80));
+        JLabel name = new PanelUi.CrispLabel(wrapHtml(k.description == null || k.description.isEmpty() ? "Task" : k.description, CARD_TEXT - 80));
         name.setFont(bodyFont());
         name.setForeground(done ? GOOD : new Color(0xf4eee2));
         top.add(name, BorderLayout.CENTER);
         int need = Math.max(1, k.requiredQty);
-        JLabel count = new JLabel(done ? "Done" : compact(Math.min(need, k.approvedQty)) + "/" + compact(need));
+        JLabel count = new PanelUi.CrispLabel(done ? "Done" : compact(Math.min(need, k.approvedQty)) + "/" + compact(need));
         if (need >= 100_000) count.setToolTipText(String.format("%,d / %,d", Math.min(need, k.approvedQty), need));
         count.setFont(smallFont());
         count.setForeground(done ? GOOD : MUTED);
@@ -999,11 +999,11 @@ class ForgeBingoPanel extends PluginPanel
                 row.setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 0));
                 row.add(itemIcon(s.itemIds.get(0), 20), BorderLayout.WEST);
                 String label = s.itemIds.size() == 1 ? plugin.itemName(s.itemIds.get(0)) : "Any one: " + anyOf(s.itemIds);
-                JLabel n = new JLabel(wrapHtml(label + (s.pending > 0 && !sDone ? " (waiting)" : ""), CARD_TEXT - 70));
+                JLabel n = new PanelUi.CrispLabel(wrapHtml(label + (s.pending > 0 && !sDone ? " (waiting)" : ""), CARD_TEXT - 70));
                 n.setFont(smallFont());
                 n.setForeground(sDone ? GOOD : s.pending > 0 ? WAIT : TEXT);
                 row.add(n, BorderLayout.CENTER);
-                JLabel x = new JLabel(sDone ? "done" : s.need > 1 ? s.approved + "/" + s.need : "x" + s.need);
+                JLabel x = new PanelUi.CrispLabel(sDone ? "done" : s.need > 1 ? s.approved + "/" + s.need : "x" + s.need);
                 x.setFont(smallFont());
                 x.setForeground(sDone ? GOOD : MUTED);
                 row.add(x, BorderLayout.EAST);
@@ -1022,7 +1022,7 @@ class ForgeBingoPanel extends PluginPanel
                 row.setOpaque(false);
                 row.setBorder(BorderFactory.createEmptyBorder(1, 4, 1, 0));
                 row.add(itemIcon(items.get(i), 20), BorderLayout.WEST);
-                JLabel n = new JLabel(wrapHtml(plugin.itemName(items.get(i)), CARD_TEXT - 40));
+                JLabel n = new PanelUi.CrispLabel(wrapHtml(plugin.itemName(items.get(i)), CARD_TEXT - 40));
                 n.setFont(smallFont());
                 n.setForeground(TEXT);
                 row.add(n, BorderLayout.CENTER);
@@ -1100,12 +1100,12 @@ class ForgeBingoPanel extends PluginPanel
         PanelUi.Card row = new PanelUi.Card(pinned ? PanelUi.GOLD : null).pad(6, pinned ? 6 : 8, 6, 8).hoverable();
         row.setLayout(new BorderLayout(6, 0));
         String count = TileInfo.countText(t);
-        JLabel countLabel = new JLabel(count);
+        JLabel countLabel = new PanelUi.CrispLabel(count);
         countLabel.setFont(smallFont());
         countLabel.setForeground(GOLD);
         int textW = CARD_TEXT - (count.isEmpty() ? 0 : countLabel.getPreferredSize().width + 6);
         String who = pinned ? workingNames(t) : "";
-        JLabel name = new JLabel(who.isEmpty() ? wrapHtml(t.title, Math.max(60, textW))
+        JLabel name = new PanelUi.CrispLabel(who.isEmpty() ? wrapHtml(t.title, Math.max(60, textW))
             : "<html><body style='width:" + Math.max(60, textW) + "px'>" + esc(t.title)
               + "<br><font color='#a69d8f'>" + esc(who) + "</font></body></html>");
         name.setFont(smallFont());
@@ -1133,7 +1133,7 @@ class ForgeBingoPanel extends PluginPanel
         Color fg = level == ConnectionStatus.Level.ERROR ? ERROR : TEXT;
         PanelUi.Card p = new PanelUi.Card(edge).pad(6, 7, 6, 7);
         p.setLayout(new BorderLayout());
-        JLabel l = new JLabel(wrapHtml(text, CARD_TEXT));
+        JLabel l = new PanelUi.CrispLabel(wrapHtml(text, CARD_TEXT));
         l.setFont(smallFont());
         l.setForeground(fg);
         p.add(l, BorderLayout.CENTER);
@@ -1162,7 +1162,7 @@ class ForgeBingoPanel extends PluginPanel
 
     private static JLabel muted(String text)
     {
-        JLabel l = new JLabel(wrapHtml(text, INNER - 4));
+        JLabel l = new PanelUi.CrispLabel(wrapHtml(text, INNER - 4));
         l.setFont(smallFont());
         l.setForeground(MUTED);
         return l;
@@ -1170,7 +1170,7 @@ class ForgeBingoPanel extends PluginPanel
 
     private static JLabel cardText(String text, Color color, int width)
     {
-        JLabel l = new JLabel(wrapHtml(text, width));
+        JLabel l = new PanelUi.CrispLabel(wrapHtml(text, width));
         l.setFont(smallFont());
         l.setForeground(color);
         l.setVerticalAlignment(SwingConstants.TOP);
@@ -1213,11 +1213,11 @@ class ForgeBingoPanel extends PluginPanel
         JPanel row = new JPanel(new BorderLayout(6, 0));
         row.setOpaque(false);
         row.setBorder(BorderFactory.createEmptyBorder(indent ? 2 : 0, indent ? 17 : 0, 0, 0));
-        JLabel box = new JLabel(indent ? (done ? SMALL_ON : SMALL_OFF) : (done ? BOX_ON : BOX_OFF));
+        JLabel box = new PanelUi.CrispLabel(indent ? (done ? SMALL_ON : SMALL_OFF) : (done ? BOX_ON : BOX_OFF));
         box.setVerticalAlignment(SwingConstants.TOP);
         box.setBorder(BorderFactory.createEmptyBorder(3, 0, 0, 0));
         row.add(box, BorderLayout.WEST);
-        JLabel l = new JLabel(wrapHtml(text == null ? "" : text, CARD_TEXT - (indent ? 34 : 18)));
+        JLabel l = new PanelUi.CrispLabel(wrapHtml(text == null ? "" : text, CARD_TEXT - (indent ? 34 : 18)));
         l.setFont(indent ? smallFont() : bodyFont());
         l.setForeground(color);
         row.add(l, BorderLayout.CENTER);
@@ -1250,7 +1250,7 @@ class ForgeBingoPanel extends PluginPanel
 
     private static JLabel cardText(String text, Color color)
     {
-        JLabel l = new JLabel(wrapHtml(text, CARD_TEXT));
+        JLabel l = new PanelUi.CrispLabel(wrapHtml(text, CARD_TEXT));
         l.setFont(smallFont());
         l.setForeground(color);
         return l;

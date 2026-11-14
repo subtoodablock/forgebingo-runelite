@@ -16,7 +16,9 @@ public enum Critter
     // Barrows
     AHRIM(1), DHAROK(1), GUTHAN(1), KARIL(1), TORAG(1), VERAC(1),
     // Inferno
-    ZUK(1), JAD(1), MELEER(1), NIBBLER(1);
+    ZUK(1), JAD(1), MELEER(1), NIBBLER(1),
+    // Skilling: any of the game's pets (see Pet); which one is kept beside it, not as a variant
+    PET(1);
 
     public final int variants;
 

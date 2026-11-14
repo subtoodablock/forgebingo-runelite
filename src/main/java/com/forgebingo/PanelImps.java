@@ -3,6 +3,8 @@ package com.forgebingo;
 import com.forgebingo.core.Critter;
 import com.forgebingo.core.CritterSprite;
 import com.forgebingo.core.ImpSprite;
+import com.forgebingo.core.Pet;
+import com.forgebingo.core.PetSprites;
 import java.awt.AWTEvent;
 import java.awt.AlphaComposite;
 import java.awt.Color;
@@ -365,6 +367,20 @@ final class PanelImps extends LayerUI<JComponent>
         if (rare.length > 0 && rnd.nextFloat() < rareChance) pick = rare[rnd.nextInt(rare.length)];
         m.kind = pick;
         m.variant = rnd.nextInt(pick.variants);
+        if (pick == Critter.PET)
+        {
+            // which pet: drawn by rarity, and not one that is already here if that can be helped
+            Pet pet = null;
+            for (int tries = 0; tries < 6; tries++)
+            {
+                pet = Pet.pick(rnd.nextDouble(), PetSprites::drawn);
+                if (pet == null) break;
+                boolean here = false;
+                for (Imp o : imps) if (o != m && o.kind == Critter.PET && o.variant == pet.ordinal()) here = true;
+                if (!here) break;
+            }
+            m.variant = pet == null ? 0 : pet.ordinal();
+        }
         if (pick == Critter.IMP) rollLook(m);
         else
         {
@@ -952,7 +968,9 @@ final class PanelImps extends LayerUI<JComponent>
         boolean moving = m.mode == Mode.WALK || m.mode == Mode.CLIMB;
         boolean stepUp = moving && ((int) Math.floor(m.px)) % 2 == 0;
         int frame = stepUp || m.mode == Mode.AIR ? 1 : 0;
-        BufferedImage img = m.kind == Critter.IMP ? ImpSprite.image(m.hat, m.item, frame) : CritterSprite.image(m.kind, m.variant, frame);
+        BufferedImage img = m.kind == Critter.IMP ? ImpSprite.image(m.hat, m.item, frame)
+            : m.kind == Critter.PET ? PetSprites.image(Pet.of(m.variant), frame) : CritterSprite.image(m.kind, m.variant, frame);
+        if (img == null) img = ImpSprite.image(ImpSprite.Hat.NONE, ImpSprite.Item.NONE, frame);
         float x = Math.round(m.x);
         float y = Math.round(m.y);
 
