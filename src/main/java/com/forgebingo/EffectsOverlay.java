@@ -6,6 +6,7 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.FontMetrics;
+import java.awt.GradientPaint;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.util.ArrayDeque;
@@ -68,6 +69,22 @@ public class EffectsOverlay extends Overlay
     private static final long LINE_MS = 2_600;
     private static final long BLACKOUT_MS = 5_600;
     private static final Color[] SPARK = {new Color(0xffd83d), new Color(0xff981f), new Color(0xff4d4d), new Color(0x5cff5c), new Color(0x5ca8ff), new Color(0xd07dff), Color.WHITE};
+
+    private static final Color STONE_TOP = new Color(0x2e2925);
+    private static final Color STONE_BOTTOM = new Color(0x1b1815);
+
+    /** Banners grow with the game window the same way the board does (1 on the fixed client, about 2 at 1080p). */
+    private static double uiScale(int h)
+    {
+        return Math.max(1, Math.min(2.2, h / 503.0));
+    }
+
+    private static Color mix(Color a, Color b, double t)
+    {
+        return new Color((int) Math.round(a.getRed() + (b.getRed() - a.getRed()) * t),
+            (int) Math.round(a.getGreen() + (b.getGreen() - a.getGreen()) * t),
+            (int) Math.round(a.getBlue() + (b.getBlue() - a.getBlue()) * t));
+    }
 
     private final Client client;
     private final Deque<Effect> queue = new ArrayDeque<>();
@@ -146,7 +163,7 @@ public class EffectsOverlay extends Overlay
         float a = alpha(t);
         double settle = Math.min(1, t / 0.15);
         int y = (int) (h * 0.12 - (1 - settle) * 30);
-        banner(g, w, y, "TASK COMPLETE", title, new Color(0xffd83d), new Color(0x3a2e10), a, 18);
+        banner(g, w, y, "TASK COMPLETE", title, PanelUi.GOLD, new Color(0x3a2e10), a, (int) Math.round(18 * uiScale(h)));
         sparks(g, w / 2, y + 12, t, 12);
     }
 
@@ -164,7 +181,7 @@ public class EffectsOverlay extends Overlay
         // a drop-in from above that settles, like the website's stamp
         double settle = Math.min(1, t / 0.15);
         int y = (int) (h * 0.22 - (1 - settle) * 60);
-        banner(g, w, y, "TILE COMPLETE", title, new Color(0x5cff5c), new Color(0x1e6b22), a, 30);
+        banner(g, w, y, "TILE COMPLETE", title, PanelUi.GREEN, new Color(0x1e6b22), a, (int) Math.round(26 * uiScale(h)));
         sparks(g, w / 2, y, t, 26);
     }
 
@@ -175,7 +192,7 @@ public class EffectsOverlay extends Overlay
         double x = t < 0.2 ? -1 + t / 0.2 : t > 0.8 ? (t - 0.8) / 0.2 : 0;
         Graphics2D g2 = (Graphics2D) g.create();
         g2.translate(x * w, 0);
-        banner(g2, w, (int) (h * 0.3), title.toUpperCase(), "", new Color(0xffd83d), new Color(0x3a2a00), a, 34);
+        banner(g2, w, (int) (h * 0.3), title.toUpperCase(), "", PanelUi.GOLD, new Color(0x3a2a00), a, (int) Math.round(28 * uiScale(h)));
         g2.dispose();
     }
 
@@ -206,8 +223,9 @@ public class EffectsOverlay extends Overlay
         if (t > 0.85) wordAlpha *= dark;
 
         String word = family == 5 && in < 1 ? "BLACKOUT".substring(0, Math.max(1, (int) (in * 8))) : "BLACKOUT";
-        int size = (int) Math.max(28, Math.min(w / 8, 110) * scale);
-        Font f = new Font("Serif", Font.BOLD, size);
+        int size = (int) Math.max(28, Math.min(w / 9, 110) * scale);
+        // the heading font of the side panel and the board
+        Font f = PanelUi.CLEAN_HEAD.deriveFont((float) size);
         g.setFont(f);
         FontMetrics fm = g.getFontMetrics();
         int tw = fm.stringWidth(word);
@@ -226,7 +244,7 @@ public class EffectsOverlay extends Overlay
         {
             float sa = (float) Math.min(1, (t - 0.35) / 0.2) * (t > 0.85 ? dark : 1f);
             g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, sa));
-            g.setFont(new Font("Serif", Font.PLAIN, Math.max(14, size / 4)));
+            g.setFont(PanelUi.CLEAN_HEAD.deriveFont((float) Math.max(14, size / 4)));
             FontMetrics sm = g.getFontMetrics();
             g.setColor(new Color(255, 255, 255, 210));
             g.drawString(sub, (w - sm.stringWidth(sub)) / 2, y + size / 2 + 10);
@@ -252,29 +270,53 @@ public class EffectsOverlay extends Overlay
 
     private void banner(Graphics2D g, int w, int y, String head, String title, Color text, Color fill, float a, int size)
     {
+        // Same look as the side panel and the board (owner, 2026-11-13): the Cinzel heading, the clean sans for the
+        // name, and a dark stone plate with a coloured rim instead of a flat coloured box.
         g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, a));
-        Font f = new Font("Serif", Font.BOLD, size);
-        g.setFont(f);
-        FontMetrics fm = g.getFontMetrics();
-        Font tf = new Font("SansSerif", Font.PLAIN, Math.max(13, size / 2));
+        Font f = PanelUi.headingFor(head, PanelUi.CLEAN_HEAD, PanelUi.CLEAN_BOLD).deriveFont((float) size);
+        FontMetrics fm = g.getFontMetrics(f);
+        Font tf = PanelUi.CLEAN_BODY.deriveFont((float) Math.max(13, Math.round(size * 0.55f)));
         FontMetrics tm = g.getFontMetrics(tf);
-        int tw = Math.max(fm.stringWidth(head), title.isEmpty() ? 0 : tm.stringWidth(title)) + 48;
-        int th = fm.getHeight() + (title.isEmpty() ? 0 : tm.getHeight()) + 20;
+        int pad = Math.max(18, size);
+        // a long tile name is shortened to fit the window
+        String shown = title;
+        int room = Math.max(60, w - 2 * pad - 24);
+        while (shown.length() > 4 && tm.stringWidth(shown) > room) shown = shown.substring(0, shown.length() - 4) + "...";
+        int gap = shown.isEmpty() ? 0 : Math.max(2, size / 6);
+        int vpad = Math.max(8, size / 3);
+        int tw = Math.max(fm.stringWidth(head), shown.isEmpty() ? 0 : tm.stringWidth(shown)) + 2 * pad;
+        int th = vpad + fm.getAscent() + fm.getDescent() + (shown.isEmpty() ? 0 : gap + tm.getAscent() + tm.getDescent()) + vpad;
         int x = (w - tw) / 2;
-        g.setColor(new Color(fill.getRed(), fill.getGreen(), fill.getBlue(), 225));
-        g.fillRoundRect(x, y, tw, th, 14, 14);
+        int arc = Math.max(12, size / 2);
+        for (int i = 4; i >= 1; i--)
+        {
+            g.setColor(new Color(0, 0, 0, 34));
+            g.fillRoundRect(x - i, y - i + 3, tw + 2 * i, th + 2 * i, arc + 2 * i, arc + 2 * i);
+        }
+        g.setPaint(new GradientPaint(0, y, mix(STONE_TOP, fill, 0.55), 0, y + th, mix(STONE_BOTTOM, fill, 0.25)));
+        g.fillRoundRect(x, y, tw, th, arc, arc);
+        g.setStroke(new BasicStroke(1f));
+        g.setColor(Color.BLACK);
+        g.drawRoundRect(x, y, tw - 1, th - 1, arc, arc);
+        float rim = Math.max(1.5f, size / 14f);
+        g.setStroke(new BasicStroke(rim));
+        g.setColor(new Color(text.getRed(), text.getGreen(), text.getBlue(), 215));
+        g.drawRoundRect(x + 2, y + 2, tw - 5, th - 5, Math.max(4, arc - 3), Math.max(4, arc - 3));
+        g.setStroke(new BasicStroke(1f));
+        g.setColor(new Color(255, 255, 255, 24));
+        g.drawLine(x + arc, y + 4 + Math.round(rim), x + tw - arc, y + 4 + Math.round(rim));
+        int hy = y + vpad + fm.getAscent();
+        int drop = Math.max(1, size / 14);
+        g.setFont(f);
+        g.setColor(new Color(0, 0, 0, 190));
+        g.drawString(head, (w - fm.stringWidth(head)) / 2 + drop, hy + drop);
         g.setColor(text);
-        g.setStroke(new BasicStroke(2f));
-        g.drawRoundRect(x, y, tw, th, 14, 14);
-        g.setColor(new Color(0, 0, 0, 180));
-        g.drawString(head, (w - fm.stringWidth(head)) / 2 + 2, y + 10 + fm.getAscent() + 2);
-        g.setColor(text);
-        g.drawString(head, (w - fm.stringWidth(head)) / 2, y + 10 + fm.getAscent());
-        if (!title.isEmpty())
+        g.drawString(head, (w - fm.stringWidth(head)) / 2, hy);
+        if (!shown.isEmpty())
         {
             g.setFont(tf);
-            g.setColor(Color.WHITE);
-            g.drawString(title, (w - tm.stringWidth(title)) / 2, y + 10 + fm.getHeight() + tm.getAscent());
+            g.setColor(PanelUi.TEXT);
+            g.drawString(shown, (w - tm.stringWidth(shown)) / 2, hy + fm.getDescent() + gap + tm.getAscent());
         }
         g.setComposite(AlphaComposite.SrcOver);
     }

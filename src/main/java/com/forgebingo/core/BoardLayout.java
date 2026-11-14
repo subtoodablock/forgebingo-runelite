@@ -5,7 +5,8 @@ import java.awt.Rectangle;
 /**
  * Where the on-screen board overlay goes (owner request, 2026-11-07): a centred board panel at most ~80% of the
  * smaller viewport side, its square grid of cells, the close button, the card a tile opens into, and hit-testing for
- * clicks. Pure and immutable, so the overlay (client thread) and the mouse listener (AWT thread) can share one.
+ * clicks. Everything but the cells grows with the board (see {@link #scale}), so the header, padding and close button
+ * keep their proportions on a big game window instead of staying fixed-client sized. Pure and immutable, so the overlay (client thread) and the mouse listener (AWT thread) can share one.
  * Coordinates are game canvas coordinates: RuneLite's stretched mode translates mouse events into this space before
  * plugin listeners see them, and overlays draw in it too.
  */
@@ -13,10 +14,14 @@ public final class BoardLayout
 {
     public static final double MAX_FRACTION = 0.8;
     public static final int MIN_CELL = 28;
+    /** gap, padding, header height and close button side at scale 1 (the 765x503 fixed client) */
     public static final int GAP = 4;
-    public static final int PAD = 10;
-    public static final int HEADER = 42;
-    public static final int CLOSE = 20;
+    public static final int PAD = 12;
+    public static final int HEADER = 46;
+    public static final int CLOSE = 22;
+    /** the board side (px) that scale 1 is designed for: 80% of the fixed client's 503px height */
+    public static final double BASE_SIDE = 402;
+    public static final double MAX_SCALE = 4;
     /** space kept free around the board when a small viewport forces it bigger than MAX_FRACTION */
     public static final int MARGIN = 4;
 
@@ -25,6 +30,12 @@ public final class BoardLayout
     public final int size;
     public final int cell;
     public final int gap;
+    /** how much bigger than the fixed-client design everything is drawn: 1 on a 765x503 client, ~2.1 at 1080p */
+    public final double scale;
+    /** padding around the header and grid, the header's height and the close button's side, already scaled */
+    public final int pad;
+    public final int header;
+    public final int close;
     private final int bx;
     private final int by;
     private final int bw;
@@ -36,20 +47,24 @@ public final class BoardLayout
     private final int cardW;
     private final int cardH;
 
-    private BoardLayout(int viewW, int viewH, int size, int cell, int gap)
+    private BoardLayout(int viewW, int viewH, int size, int cell, int gap, double scale, int pad, int header, int close)
     {
+        this.scale = scale;
+        this.pad = pad;
+        this.header = header;
+        this.close = close;
         this.viewW = viewW;
         this.viewH = viewH;
         this.size = size;
         this.cell = cell;
         this.gap = gap;
         int grid = cell * size + gap * (size - 1);
-        bw = grid + 2 * PAD;
-        bh = grid + HEADER + 2 * PAD;
+        bw = grid + 2 * pad;
+        bh = grid + header + 2 * pad;
         bx = (viewW - bw) / 2;
         by = (viewH - bh) / 2;
-        gx = bx + PAD;
-        gy = by + HEADER + PAD;
+        gx = bx + pad;
+        gy = by + header + pad;
 
         int maxW = Math.max(1, viewW - 16);
         int maxH = Math.max(1, viewH - 16);
@@ -65,15 +80,20 @@ public final class BoardLayout
         int vw = Math.max(1, viewW);
         int vh = Math.max(1, viewH);
         int n = Math.max(1, Math.min(20, boardSize));
-        int gap = GAP;
         int avail = (int) (Math.min(vw, vh) * MAX_FRACTION);
+        double scale = Math.max(1, Math.min(MAX_SCALE, avail / BASE_SIDE));
+        int pad = (int) Math.round(PAD * scale);
+        int header = (int) Math.round(HEADER * scale);
+        int close = (int) Math.round(CLOSE * scale);
         // the panel is taller than wide (header), so the height decides the grid side
-        int gridAvail = Math.min(avail - 2 * PAD, avail - HEADER - 2 * PAD);
+        int gridAvail = avail - header - 2 * pad;
+        // gaps grow with the board, but never eat into the cells of a board with many tiles
+        int gap = Math.max(GAP, Math.min((int) Math.round(GAP * scale), gridAvail / (n * 14)));
         int cell = (gridAvail - gap * (n - 1)) / n;
         if (cell < MIN_CELL)
         {
             // small viewport or big board: grow towards MIN_CELL while the board still fits on screen
-            int fit = Math.min(vw - 2 * MARGIN - 2 * PAD, vh - 2 * MARGIN - HEADER - 2 * PAD);
+            int fit = Math.min(vw - 2 * MARGIN - 2 * pad, vh - 2 * MARGIN - header - 2 * pad);
             int fitCell = (fit - gap * (n - 1)) / n;
             if (fitCell < 8)
             {
@@ -82,7 +102,7 @@ public final class BoardLayout
             }
             cell = Math.max(cell, Math.min(MIN_CELL, fitCell));
         }
-        return new BoardLayout(vw, vh, n, Math.max(2, cell), gap);
+        return new BoardLayout(vw, vh, n, Math.max(2, cell), gap, scale, pad, header, close);
     }
 
     /** The whole board panel (background, header and grid). */
@@ -106,7 +126,7 @@ public final class BoardLayout
     /** The close button in the header's top-right corner. */
     public Rectangle closeButton()
     {
-        return new Rectangle(bx + bw - PAD - CLOSE, by + PAD, CLOSE, CLOSE);
+        return new Rectangle(bx + bw - pad - close, by + pad, close, close);
     }
 
     /** The card a clicked tile opens into: centred on the board, ~60% of its width, kept inside the viewport. */
@@ -150,6 +170,13 @@ public final class BoardLayout
     public boolean insideCard(int x, int y)
     {
         return x >= cardX && y >= cardY && x < cardX + cardW && y < cardY + cardH;
+    }
+
+    /** Smooth both ways (cubic ease-in-out) over 0..1 (clamped): for things that fade or grow in place. */
+    public static double easeInOut(double t)
+    {
+        double c = Math.max(0, Math.min(1, t));
+        return c < 0.5 ? 4 * c * c * c : 1 - Math.pow(-2 * c + 2, 3) / 2;
     }
 
     /** Cubic ease-out over 0..1 (clamped): fast start, soft landing. */

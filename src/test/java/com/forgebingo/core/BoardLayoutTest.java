@@ -42,8 +42,51 @@ public class BoardLayoutTest
             Rectangle g = l.grid();
             assertEquals(g.x + g.width, last.x + last.width);
             assertEquals(g.y + g.height, last.y + last.height);
-            assertEquals(BoardLayout.GAP, l.gap);
+            // gaps grow with the board but stay small next to the cells
+            assertTrue(l.gap >= BoardLayout.GAP);
+            assertTrue(l.gap * 8 <= l.cell);
         }
+    }
+
+    @Test
+    public void fixedClientIsScaleOneAndBigWindowsScaleUp()
+    {
+        BoardLayout fixed = BoardLayout.compute(765, 503, 5);
+        assertEquals(1.0, fixed.scale, 1e-9);
+        assertEquals(BoardLayout.PAD, fixed.pad);
+        assertEquals(BoardLayout.HEADER, fixed.header);
+        assertEquals(BoardLayout.CLOSE, fixed.close);
+        assertEquals(BoardLayout.GAP, fixed.gap);
+        // a small viewport never goes under the fixed-client sizes
+        assertEquals(1.0, BoardLayout.compute(320, 240, 5).scale, 1e-9);
+
+        double prev = 1;
+        for (int[] view : new int[][] {{1280, 720}, {1920, 1080}, {2560, 1440}, {3840, 2160}, {9000, 9000}})
+        {
+            BoardLayout l = BoardLayout.compute(view[0], view[1], 5);
+            assertTrue(l.scale >= prev);
+            assertTrue(l.scale <= BoardLayout.MAX_SCALE);
+            prev = l.scale;
+            Rectangle b = l.board();
+            assertInside(new Rectangle(0, 0, view[0], view[1]), b);
+            assertTrue(b.height <= view[1] * BoardLayout.MAX_FRACTION + 1);
+            // the header, padding and close button keep their share of the board
+            assertEquals(BoardLayout.HEADER * l.scale, l.header, 0.51);
+            assertEquals(BoardLayout.PAD * l.scale, l.pad, 0.51);
+            Rectangle close = l.closeButton();
+            assertEquals(l.close, close.width);
+            assertInside(b, close);
+            assertTrue(close.y + close.height <= l.grid().y);
+            // the grid starts under the header and is padded on every side
+            Rectangle g = l.grid();
+            assertEquals(b.x + l.pad, g.x);
+            assertEquals(b.y + l.pad + l.header, g.y);
+            assertEquals(b.x + b.width - l.pad, g.x + g.width);
+            assertEquals(b.y + b.height - l.pad, g.y + g.height);
+        }
+        assertTrue(BoardLayout.compute(1920, 1080, 5).scale > 2);
+        // many tiles on a big screen: the cells still reach the minimum
+        assertTrue(BoardLayout.compute(1920, 1080, 20).cell >= BoardLayout.MIN_CELL);
     }
 
     @Test
