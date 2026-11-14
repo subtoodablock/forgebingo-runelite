@@ -18,6 +18,7 @@ import com.forgebingo.core.QueuedEvent;
 import com.forgebingo.core.Sanitizer;
 import com.forgebingo.core.ScreenshotStamp;
 import com.forgebingo.core.ScreenshotEncode;
+import com.forgebingo.core.ScreenshotStack;
 import com.forgebingo.core.WindowShot;
 import com.forgebingo.core.SourceClassifier;
 import com.forgebingo.core.TileInfo;
@@ -1633,13 +1634,13 @@ public class ForgeBingoPlugin extends Plugin
      * message and the collection log pop-up (sent as "1 of 2" and "2 of 2").
      */
     private static final long[] DROP_SHOT_DELAYS_MS = {300, 1500};
-    /** A kill that counts for a kill-count tile: one picture, as the loot lands (one per kill, so only one). */
-    private static final long[] KC_SHOT_DELAYS_MS = {300};
-
+    /**
+     * Kill-count tiles get both pictures too (owner, 2026-11-14: storage is fine, take two until we know the best
+     * moment for every boss). They go up stacked as one image, see ScreenshotStack.
+     */
     static long[] shotDelays(String sourceType, boolean chestWindow)
     {
-        if (chestWindow) return CHEST_SHOT_DELAYS_MS;
-        return GameEvent.KC.equals(sourceType) ? KC_SHOT_DELAYS_MS : DROP_SHOT_DELAYS_MS;
+        return chestWindow ? CHEST_SHOT_DELAYS_MS : DROP_SHOT_DELAYS_MS;
     }
     /** A reward chest's loot window: once as it opens and again a little later (sent as "1 of 2" and "2 of 2"). */
     private static final long[] CHEST_SHOT_DELAYS_MS = {300, 1800};
@@ -1918,25 +1919,34 @@ public class ForgeBingoPlugin extends Plugin
                     if (title != null && !title.isEmpty() && !names.contains(title)) names.add(title);
                 }
                 String tiles = names.isEmpty() ? null : names.size() <= 2 ? String.join(", ", names) : names.get(0) + ", " + names.get(1) + " +" + (names.size() - 2);
+                // Several frames of one drop go up as ONE picture, stacked top to bottom in the order taken
+                // (owner, 2026-11-14). Each frame keeps its own stamp: its time and which it is ("1 of 2").
+                List<BufferedImage> frames = new ArrayList<>();
+                java.time.ZonedDateTime first = null;
                 for (int n = 0; n < shots.size(); n++)
                 {
                     int i = shots.get(n);
-                    // several frames of one drop say which they are, on the picture and in the file's name
                     String part = shots.size() > 1 ? (n + 1) + " of " + shots.size() : null;
                     String stampTile = part == null ? tiles : tiles == null ? part : tiles + " (" + part + ")";
-                    String label = labels.get(t.getKey());
-                    if (part != null) label = (label == null || label.isEmpty() ? "proof" : label) + " " + part;
                     BufferedImage img = ImageIO.read(new java.io.ByteArrayInputStream(s.raw[i]));
                     if (img == null) continue;
-                    byte[] stamped = ScreenshotEncode.jpeg(ScreenshotStamp.stamp(img, kw, s.taken[i], s.player, stampTile), ApiClient.MAX_SCREENSHOT_BYTES);
+                    frames.add(ScreenshotStamp.stamp(img, kw, s.taken[i], s.player, stampTile));
+                    if (first == null) first = s.taken[i];
+                }
+                BufferedImage stacked = ScreenshotStack.vertical(frames);
+                if (stacked == null) continue;
+                byte[] stamped = ScreenshotEncode.jpeg(stacked, ApiClient.MAX_SCREENSHOT_BYTES);
+                if (stamped == null || stamped.length > ApiClient.MAX_SCREENSHOT_BYTES)
+                {
+                    // too big even at low quality: send the first frame alone rather than nothing
+                    stamped = ScreenshotEncode.jpeg(frames.get(0), ApiClient.MAX_SCREENSHOT_BYTES);
                     if (stamped == null) continue;
-                    String capturedAt = s.taken[i].withZoneSameInstant(java.time.ZoneOffset.UTC).toInstant().toString();
-                    ApiResult<ApiModels.ProofResponse> r = api.uploadProof(t.getKey(), stamped, t.getValue(), kw, capturedAt, label);
-                    if (!r.ok())
-                    {
-                        notice("Screenshot upload failed: " + r.describe(), true);
-                        break;
-                    }
+                }
+                String capturedAt = first.withZoneSameInstant(java.time.ZoneOffset.UTC).toInstant().toString();
+                ApiResult<ApiModels.ProofResponse> r = api.uploadProof(t.getKey(), stamped, t.getValue(), kw, capturedAt, labels.get(t.getKey()));
+                if (!r.ok())
+                {
+                    notice("Screenshot upload failed: " + r.describe(), true);
                 }
             }
             catch (java.io.IOException ex)
