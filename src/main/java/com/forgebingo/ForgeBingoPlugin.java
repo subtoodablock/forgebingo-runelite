@@ -1523,7 +1523,7 @@ public class ForgeBingoPlugin extends Plugin
         // a raid chest is photographed when its loot could count, or when the raid itself just counted for a tile
         if (maybeScreenshot && (couldCount(ev) || (chestWindow && raidWithChest(ev.sourceName) && freshRaidKc() != null)))
         {
-            captureScreenshot(ev.id, chestWindow ? CHEST_SHOT_DELAYS_MS : DROP_SHOT_DELAYS_MS, chestWindow);
+            captureScreenshot(ev.id, shotDelays(ev.sourceType, chestWindow), chestWindow);
         }
         List<QueuedEvent> evicted = queue.add(new QueuedEvent(ev, System.currentTimeMillis()));
         for (QueuedEvent q : evicted) notice("Queue full, dropped oldest event: " + q.event.label(), true);
@@ -1626,10 +1626,21 @@ public class ForgeBingoPlugin extends Plugin
     }
 
     /**
-     * Milliseconds between spotting a drop and taking its screenshot. ~2 game ticks (owner, 2026-11-12): by then
-     * the drop's chat message, the loot on the ground and the collection log pop-up are all on screen.
+     * Milliseconds between spotting a drop and taking its screenshots. The first is the moment the loot lands
+     * (owner, 2026-11-14): the loot notice and the "kill count" chat line arrive in the same game tick as the loot
+     * (measured on live Zulrah, Giant Mole, Vorkath and clue events: 5-34 ms apart), so the frame a moment later
+     * shows it on the ground before the player can pick it up. The second, ~2.5 ticks on, catches the drop's chat
+     * message and the collection log pop-up (sent as "1 of 2" and "2 of 2").
      */
-    private static final long[] DROP_SHOT_DELAYS_MS = {1200};
+    private static final long[] DROP_SHOT_DELAYS_MS = {300, 1500};
+    /** A kill that counts for a kill-count tile: one picture, as the loot lands (one per kill, so only one). */
+    private static final long[] KC_SHOT_DELAYS_MS = {300};
+
+    static long[] shotDelays(String sourceType, boolean chestWindow)
+    {
+        if (chestWindow) return CHEST_SHOT_DELAYS_MS;
+        return GameEvent.KC.equals(sourceType) ? KC_SHOT_DELAYS_MS : DROP_SHOT_DELAYS_MS;
+    }
     /** A reward chest's loot window: once as it opens and again a little later (sent as "1 of 2" and "2 of 2"). */
     private static final long[] CHEST_SHOT_DELAYS_MS = {300, 1800};
     /** minimum time between "Send screenshot" proofs */
