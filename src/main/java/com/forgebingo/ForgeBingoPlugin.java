@@ -277,6 +277,7 @@ public class ForgeBingoPlugin extends Plugin
         archiveChests.reset();
         wasInstance = false;
         raidShot = null;
+        raidKcResult = null;
         if (navigationButton != null) clientToolbar.removeNavigation(navigationButton);
         navigationButton = null;
         ForgeBingoPanel closing = panel;
@@ -1033,6 +1034,26 @@ public class ForgeBingoPlugin extends Plugin
     /** Chambers of Xeric: a "Special loot:" line, then "Name - Item" on the next */
     private static final java.util.regex.Pattern SPECIAL_LINE = java.util.regex.Pattern.compile("^(.{1,12}?) - (.+)$");
     private static final long RAID_SHOT_TTL_MILLIS = 15 * 60_000L;
+    /**
+     * A raid's completion that counted for a kill-count tile (owner, 2026-11-13): the kill message comes before the
+     * reward chest, so the chest opened next is photographed and added to those same tiles as proof.
+     */
+    private volatile ApiModels.EventResult raidKcResult;
+    private volatile long raidKcAt;
+
+    /** Raids whose completion message comes before their reward chest is opened. */
+    static boolean raidWithChest(String name)
+    {
+        if (name == null) return false;
+        String n = name.toLowerCase(java.util.Locale.ROOT);
+        return n.contains("chambers of xeric") || n.contains("theatre of blood") || n.contains("tombs of amascut") || n.contains("fractured archive");
+    }
+
+    private ApiModels.EventResult freshRaidKc()
+    {
+        ApiModels.EventResult r = raidKcResult;
+        return r != null && System.currentTimeMillis() - raidKcAt < RAID_SHOT_TTL_MILLIS ? r : null;
+    }
     private volatile int specialLootTick = -100;
     /** the frame taken when a raid's chat named us for special loot; goes in front of that chest's two shots */
     private volatile byte[] raidShot;
@@ -1140,7 +1161,8 @@ public class ForgeBingoPlugin extends Plugin
             if (!config.sendKc()) return;
             GameEvent ev = base(GameEvent.KC);
             ev.sourceName = k.boss; // one event per kill; the server matches the name against its catalogue
-            submit(ev, false);
+            // a kill that counts for a kill-count tile gets its screenshot too (owner, 2026-11-13)
+            submit(ev, true);
         });
         ChatParsers.clueCompletion(msg).ifPresent(c -> {
             petDetector.onSource(c.sourceName(), tick);
@@ -1148,7 +1170,7 @@ public class ForgeBingoPlugin extends Plugin
             // One completion = one kc event for the clue_<tier> catalogue source (the casket loot is a separate clue event).
             GameEvent ev = base(GameEvent.KC);
             ev.sourceName = c.sourceName();
-            submit(ev, false);
+            submit(ev, true);
         });
     }
 
@@ -1498,7 +1520,8 @@ public class ForgeBingoPlugin extends Plugin
             return;
         }
         log.debug("queue event {} {}", ev.sourceType, ev.label());
-        if (maybeScreenshot && couldCount(ev))
+        // a raid chest is photographed when its loot could count, or when the raid itself just counted for a tile
+        if (maybeScreenshot && (couldCount(ev) || (chestWindow && raidWithChest(ev.sourceName) && freshRaidKc() != null)))
         {
             captureScreenshot(ev.id, chestWindow ? CHEST_SHOT_DELAYS_MS : DROP_SHOT_DELAYS_MS, chestWindow);
         }
@@ -1944,6 +1967,26 @@ public class ForgeBingoPlugin extends Plugin
                 return;
             }
             automationNoticeShown = false;
+            // the pictures of a raid's chest also go to the tiles its completion just counted for
+            ApiModels.EventResult proofFor = result;
+            if (result != null && !result.duplicate && GameEvent.RAID_CHEST.equals(event.sourceType) && raidWithChest(event.sourceName))
+            {
+                ApiModels.EventResult kc = freshRaidKc();
+                if (kc != null && kc.matched != null)
+                {
+                    ApiModels.EventResult both = new ApiModels.EventResult();
+                    both.eventId = result.eventId;
+                    both.matched = new ArrayList<>();
+                    if (result.matched != null) both.matched.addAll(result.matched);
+                    both.matched.addAll(kc.matched);
+                    proofFor = both;
+                }
+            }
+            if (result != null && result.isMatched() && !result.duplicate && GameEvent.KC.equals(event.sourceType) && raidWithChest(event.sourceName))
+            {
+                raidKcResult = result;
+                raidKcAt = System.currentTimeMillis();
+            }
             if (result != null && result.isMatched() && !result.duplicate)
             {
                 // tiles that were already finished before this drop: it still counts, but no second celebration
@@ -2004,13 +2047,18 @@ public class ForgeBingoPlugin extends Plugin
                         notice("Counted: " + tileName + progress + state, config.chatNotices());
                     }
                 }
-                maybeUploadScreenshot(event, result);
+                maybeUploadScreenshot(event, proofFor);
                 for (String tileId : tileNowDone)
                 {
                     if (!wasDone.contains(tileId)) celebrateTile(config.activeBoardId(), tileId, tileTitles.get(tileId));
                 }
                 boardVersions.clear();
                 executor.execute(ForgeBingoPlugin.this::pollBoardSafely);
+            }
+            else if (proofFor != result)
+            {
+                // the chest's own loot counted for nothing, but the raid did: its pictures are that raid's proof
+                maybeUploadScreenshot(event, proofFor);
             }
             else
             {
