@@ -4,6 +4,7 @@ import com.forgebingo.core.Critter;
 import com.forgebingo.core.CritterSprite;
 import com.forgebingo.core.ImpSprite;
 import com.forgebingo.core.Chexy;
+import com.forgebingo.core.ChexySpells;
 import com.forgebingo.core.Pet;
 import com.forgebingo.core.PetSprites;
 import java.awt.AWTEvent;
@@ -84,8 +85,12 @@ final class PanelImps extends LayerUI<JComponent>
         float sparkX, sparkY;
         /** Chexy's own clock (its rings and comets), slowed for Calm */
         float wisp;
-        /** seconds since Chexy's visit began (it powers up as the visit goes on: Chexy.form) */
+        /** seconds since Chexy's visit began (it powers up, or casts its spells, as the visit goes on) */
         float visitAge;
+        /** this Chexy visit casts spells (ChexySpells) rather than powering up (Chexy.form): never both (owner) */
+        boolean spellVisit;
+        /** which way Chexy fires its beam volley (1 right, -1 left; 0 when not firing) */
+        int beamDir;
         Rectangle last;
     }
 
@@ -131,6 +136,8 @@ final class PanelImps extends LayerUI<JComponent>
     float rollChance = -1f;
     /** the odds a visitor is Chexy (the previews set 1) */
     float chexyChance = PanelTheme.CHEXY_CHANCE;
+    /** which path a Chexy visit takes: below 0 the usual 50/50 roll, 0 always the power-up, 1 always the spells */
+    int chexySpells = -1;
     private static final float POP_TIME = 0.45f;
     /** Calm: Chexy turns slower and sparkles less */
     private boolean calm;
@@ -145,6 +152,7 @@ final class PanelImps extends LayerUI<JComponent>
     {
         theme = t == null ? PanelTheme.CLASSIC : t;
         imps.clear();
+        clearSpells();
         clearDrops();
         fx.reset();
         rollT = PanelTheme.ROLL_SECONDS;
@@ -219,6 +227,26 @@ final class PanelImps extends LayerUI<JComponent>
         }
     };
     private final List<Imp> imps = new ArrayList<>();
+
+    /** One flower from Chexy's flower spell, standing on groundY in the column's coordinates. */
+    private static final class Bloom
+    {
+        int x, groundY, kind, index, key = -2;
+        /** seconds since it was placed, and how long it waits before it starts to grow */
+        float t, delay;
+    }
+
+    private final List<Bloom> blooms = new ArrayList<>();
+    /** the flower spell's wave: where it started, and how long ago (below 0: none) */
+    private float waveX, waveY, waveT = -1f;
+    private Rectangle waveLast;
+    private final float[] recoil = new float[2];
+
+    private void clearSpells()
+    {
+        blooms.clear();
+        waveT = -1f;
+    }
     private final List<int[]> plats = new ArrayList<>(); // left, right, y
     private final Timer timer = new Timer(33, e -> frame());
     private JLayer<? extends JComponent> layer;
@@ -274,7 +302,11 @@ final class PanelImps extends LayerUI<JComponent>
     void setEnabled(boolean on)
     {
         enabled = on;
-        if (!on) imps.clear();
+        if (!on)
+        {
+            imps.clear();
+            clearSpells();
+        }
         sync();
         if (layer != null) layer.repaint();
     }
@@ -308,6 +340,7 @@ final class PanelImps extends LayerUI<JComponent>
         rain = false;
         timer.stop();
         imps.clear();
+        clearSpells();
         clearDrops();
         itemCache.clear();
     }
@@ -402,6 +435,8 @@ final class PanelImps extends LayerUI<JComponent>
             m.variant = 0;
             m.wisp = rnd(0, 20);
             m.visitAge = 0;
+            // each visit is either the power-up or the spells, rolled 50/50 as it arrives (the previews can force it)
+            m.spellVisit = chexySpells < 0 ? rnd.nextBoolean() : chexySpells > 0;
             return true;
         }
         if (visitor && theme == PanelTheme.BARROWS)
@@ -651,18 +686,35 @@ final class PanelImps extends LayerUI<JComponent>
         {
             // the wisp glides: it eases into speed and out again, and swings through gentle curves on the way
             // its rings spin up while it powers up (Chexy.spin); it all but stops to gather itself while it charges
+            // a visit either powers up or casts spells, never both: each clock is -1 on the other path
+            float before = ChexySpells.spellAge(m.spellVisit, m.visitAge);
             m.visitAge += dt;
-            m.wisp += dt * (calm ? 0.55f : 1f) * Chexy.spin(m.visitAge);
-            float speed = (40f * Math.min(1f, d / 46f) + 6f) * (Chexy.charge(m.visitAge) > 0 ? 0.25f : 1f);
+            float power = Chexy.powerAge(m.spellVisit, m.visitAge);
+            float spell = ChexySpells.spellAge(m.spellVisit, m.visitAge);
+            m.wisp += dt * (calm ? 0.55f : 1f) * Chexy.spin(power);
+            // its spells (ChexySpells): the flowers are placed as each wave sets off (the second bloom is gentler);
+            // a volley fires towards the wider side of the panel, chosen once as it starts
+            for (float at : ChexySpells.FLOWER_TIMES)
+            {
+                float spawnAt = at + ChexySpells.FLOWER_SPAWN;
+                if (before >= 0 && before < spawnAt && spell >= spawnAt) castFlowers(m, at != ChexySpells.FLOWER_AT);
+            }
+            boolean firing = ChexySpells.volleyPhase(spell) >= 0;
+            if (!firing) m.beamDir = 0;
+            else if (m.beamDir == 0) m.beamDir = m.x < vw / 2f ? 1 : -1;
+            float slow = ChexySpells.flySpeed(spell) * (Chexy.charge(power) > 0 ? 0.25f : 1f);
+            float speed = (40f * Math.min(1f, d / 46f) + 6f) * slow;
             float swirl = (float) Math.sin(m.wisp * 0.9f) * 0.55f;
             float wx = dx / d * (float) Math.cos(swirl) - dy / d * (float) Math.sin(swirl);
             float wy = dx / d * (float) Math.sin(swirl) + dy / d * (float) Math.cos(swirl);
-            m.vx += (wx * speed - m.vx) * Math.min(1, dt * 1.1f);
-            m.vy += (wy * speed - m.vy) * Math.min(1, dt * 1.1f);
+            // to fire it stops short rather than drifting to a halt
+            float ease = Math.min(1, dt * (slow == 0 ? 6f : 1.1f));
+            m.vx += (wx * speed - m.vx) * ease;
+            m.vy += (wy * speed - m.vy) * ease;
             m.x += m.vx * dt;
             m.y += m.vy * dt;
             // stays clear of the side edges (and the scroll bar), its glow and aura included
-            int edge = Chexy.form(m.visitAge) == Chexy.BASE ? 28 : 34;
+            int edge = Chexy.form(power) == Chexy.BASE ? 28 : 34;
             m.x = Math.max(edge, Math.min(vw - edge - 2, m.x));
             return;
         }
@@ -674,6 +726,105 @@ final class PanelImps extends LayerUI<JComponent>
         if (Math.abs(m.vx) > 4) m.dir = m.vx > 0 ? 1 : -1;
         // the wings beat about three times a second
         m.px += dt * 6.5f;
+    }
+
+    /**
+     * Chexy's flower spell: a wave sets off from under it, and flowers are placed to bloom one after another on the
+     * card top just below it and on one near the bottom of what you can see (only where a still prop may stand, so
+     * not right under buttons or drop-downs; failing that, along the very bottom), the nearest first.
+     */
+    private void castFlowers(Imp m, boolean gentle)
+    {
+        if (layer == null) return;
+        Rectangle view = layer.getVisibleRect();
+        int vw = width();
+        waveX = m.x;
+        waveY = m.y + 2;
+        waveT = 0f;
+        int[] near = null;
+        for (int[] p : plats)
+        {
+            if (p.length < 4 || p[3] != 1) continue;
+            if (p[2] < m.y - 6 || p[2] > m.y + 90 || p[2] > view.y + view.height - 2 || p[2] < view.y + 12) continue;
+            if (m.x < p[0] - 30 || m.x > p[1] + 30) continue;
+            if (near == null || p[2] < near[2]) near = p;
+        }
+        int[] low = null;
+        for (int[] p : plats)
+        {
+            if (p.length < 4 || p[3] != 1 || p == near) continue;
+            if (p[2] < view.y + view.height * 0.55f || p[2] > view.y + view.height - 3) continue;
+            if (low == null || p[2] > low[2]) low = p;
+        }
+        int index = 0;
+        if (near != null) index = plant(near[0], near[1], near[2], m, calm ? 3 : gentle ? 4 : 6, index, true);
+        if (low != null) plant(low[0], low[1], low[2], m, calm ? 3 : gentle ? 5 : 8, index, false);
+        else plant(10, vw - 10, view.y + view.height - 2, m, calm ? 3 : gentle ? 5 : 8, index, false);
+    }
+
+    private int plant(int left, int right, int ground, Imp m, int count, int index, boolean aroundChexy)
+    {
+        left += 5;
+        right -= 5;
+        if (right - left < 8) return index;
+        float spacing = rnd(9, 13);
+        float span = (right - left) / (float) count;
+        for (int i = 0; i < count; i++)
+        {
+            float x = aroundChexy ? m.x + (i % 2 == 0 ? 1 : -1) * spacing * (i / 2 + 0.5f) + rnd(-2, 2)
+                : left + span * (i + 0.5f) + rnd(-span * 0.3f, span * 0.3f);
+            int xi = Math.round(Math.max(left, Math.min(right, x)));
+            boolean crowded = false;
+            for (Bloom o : blooms) if (o.groundY == ground && Math.abs(o.x - xi) < 7) crowded = true;
+            if (crowded) continue;
+            Bloom b = new Bloom();
+            b.x = xi;
+            b.groundY = ground;
+            b.kind = rnd.nextInt(ChexySpells.FLOWER_KINDS);
+            b.index = index++;
+            // the wave reaches the near ones first
+            b.delay = 0.12f + Math.abs(xi - m.x) / 110f + Math.abs(ground - m.y) / 260f + rnd(0, 0.12f);
+            blooms.add(b);
+        }
+        return index;
+    }
+
+    /** how long a flower lasts once it starts (the later ones a little shorter, so they all fade together) */
+    private static float bloomLife(Bloom b)
+    {
+        return ChexySpells.FLOWER_LIFE - b.delay * 0.5f;
+    }
+
+    /** The flowers grow, sway and fade; the wave spreads. Only what changed is repainted. */
+    private void stepSpells(float dt)
+    {
+        if (waveT >= 0)
+        {
+            waveT += dt;
+            float rad = ChexySpells.waveRadius(waveT);
+            Rectangle r = rad < 0 ? null : new Rectangle(Math.round(waveX - rad - 3), Math.round(waveY - rad * 0.3f - 3),
+                Math.round(rad * 2 + 6), Math.round(rad * 0.6f + 6));
+            if (r != null || waveLast != null) layer.repaint(r == null ? waveLast : waveLast == null ? r : r.union(waveLast));
+            waveLast = r;
+            if (rad < 0) waveT = -1f;
+        }
+        for (int i = blooms.size() - 1; i >= 0; i--)
+        {
+            Bloom b = blooms.get(i);
+            b.t += dt;
+            float since = b.t - b.delay;
+            float life = bloomLife(b);
+            int key = ChexySpells.flowerKey(b.kind, b.x, since, life, clock);
+            boolean petals = ChexySpells.petalsFlying(since, b.index, calm);
+            boolean gone = since >= life;
+            if (key != b.key || petals || gone)
+            {
+                layer.repaint(petals ? new Rectangle(b.x - 22, b.groundY - 26, 44, 40)
+                    : new Rectangle(b.x - 6, b.groundY - 15, 13, 16));
+                b.key = key;
+            }
+            if (gone) blooms.remove(i);
+        }
     }
 
     private void step(Imp m, float dt)
@@ -885,6 +1036,7 @@ final class PanelImps extends LayerUI<JComponent>
         }
         for (Imp m : imps) step(m, dt);
         stepVisitors(dt);
+        stepSpells(dt);
         // hanging out: two imps that meet stop for a chat
         for (int i = 0; i < imps.size(); i++)
         {
@@ -925,6 +1077,12 @@ final class PanelImps extends LayerUI<JComponent>
             // Chexy's aura and flash reach further than a creature's box: about 32 px round its centre (20 up)
             Rectangle r = m.kind == Critter.CHEXY ? new Rectangle(Math.round(m.x) - 40, Math.round(m.y) - 66, 80, 82)
                 : new Rectangle(Math.round(m.x) - 30, Math.round(m.y) - 50, 60, 58);
+            if (m.kind == Critter.CHEXY)
+            {
+                // its spells reach further still: the barrier's fragments, and a volley's beams across the panel
+                if (ChexySpells.barrierPhase(ChexySpells.spellAge(m.spellVisit, m.visitAge)) >= 0) r = r.union(new Rectangle(Math.round(m.x) - 62, Math.round(m.y) - 84, 124, 126));
+                if (m.beamDir != 0) r = r.union(ChexySpells.volleyArea(m.x, m.y - 20, layer.getVisibleRect()));
+            }
             layer.repaint(m.last == null ? r : r.union(m.last));
             m.last = r;
         }
@@ -1129,12 +1287,24 @@ final class PanelImps extends LayerUI<JComponent>
         boolean showImps = enabled && !imps.isEmpty();
         boolean showRain = rain && !drops.isEmpty();
         boolean showFx = fxOn() && !fx.isEmpty();
-        if (!showImps && !showRain && !showFx) return;
+        boolean showSpells = enabled && (!blooms.isEmpty() || waveT >= 0);
+        if (!showImps && !showRain && !showFx && !showSpells) return;
         Graphics2D g2 = (Graphics2D) g.create();
         try
         {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             if (showFx) fx.paint(g2, clock);
+            if (showSpells)
+            {
+                // Chexy's flowers, and the wave that brings them
+                if (waveT >= 0) ChexySpells.paintWave(g2, waveX, waveY, waveT, calm);
+                for (Bloom b : blooms)
+                {
+                    float since = b.t - b.delay;
+                    ChexySpells.paintFlower(g2, b.x, b.groundY, b.kind, since, bloomLife(b), clock);
+                    ChexySpells.paintPetals(g2, b.x, b.groundY, b.kind, since, b.index, calm);
+                }
+            }
             if (showRain)
             {
                 g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
@@ -1142,6 +1312,19 @@ final class PanelImps extends LayerUI<JComponent>
             }
             g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
             if (showImps) for (Imp m : imps) paintImp(g2, m);
+            if (showImps)
+            {
+                // Chexy's beam volley goes over everything, in the column's own coordinates
+                for (Imp m : imps)
+                {
+                    if (m.kind != Critter.CHEXY || m.beamDir == 0 || m.popDir != 0) continue;
+                    float vp = ChexySpells.volleyPhase(ChexySpells.spellAge(m.spellVisit, m.visitAge));
+                    float cx = Math.round(m.x) + Chexy.bobX(m.wisp);
+                    float cy = Math.round(m.y) - 20 + Chexy.bobY(m.wisp);
+                    ChexySpells.paintVolley(g2, cx, cy, m.beamDir, vp, m.visitAge, Chexy.BASE, calm,
+                        layer.getVisibleRect());
+                }
+            }
         }
         finally
         {
@@ -1204,8 +1387,15 @@ final class PanelImps extends LayerUI<JComponent>
             // leaning a touch into the way it is going
             float w = m.wisp;
             g.translate(Chexy.bobX(w), -20 + Chexy.bobY(w));
+            if (m.beamDir != 0)
+            {
+                // it kicks back with every shot of a volley
+                ChexySpells.recoil(ChexySpells.volleyPhase(ChexySpells.spellAge(m.spellVisit, m.visitAge)), m.beamDir, calm, recoil);
+                g.translate(recoil[0], recoil[1]);
+            }
             g.rotate(Math.max(-0.25f, Math.min(0.25f, m.vx * 0.006f)));
-            Chexy.paint(g, 0, 0, w, w, Chexy.SIZE, calm, m.visitAge);
+            Chexy.paint(g, 0, 0, w, w, Chexy.SIZE, calm, Chexy.powerAge(m.spellVisit, m.visitAge),
+                ChexySpells.spellAge(m.spellVisit, m.visitAge));
             g.setTransform(old);
             return;
         }

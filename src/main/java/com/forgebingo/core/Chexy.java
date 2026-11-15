@@ -23,7 +23,7 @@ import java.awt.image.BufferedImage;
  * The comets are steered by the angle they sit at around the centre, spaced evenly round the wheel with only a
  * small sway, so they never bunch up; where that angle falls on each comet's ring is solved exactly.
  *
- * The power-up (owner, 2026-11-14): on every visit Chexy powers up, anime style. A few seconds as itself, then it
+ * The power-up (owner, 2026-11-14): on a power-up visit (half its visits; the rest are spell visits) Chexy powers up, anime style. A few seconds as itself, then it
  * charges (it trembles, its rings spin up, sparks crackle and the glow pulses), flashes, and comes back in its GOLD
  * FORM, with gold rings and a tall flickering flame aura, lightning and rising specks. Later it charges again and
  * flashes into its BLUE FORM: cyan and electric blue, with a calmer, steadier aura and a blue shimmer. It stays blue
@@ -45,7 +45,7 @@ public final class Chexy
     // ------------------------------------------------------------------ the power-up, by seconds into the visit
     /** the forms */
     public static final int BASE = 0, GOLD = 1, BLUE = 2;
-    /** seconds as itself before the first charge */
+    /** seconds as itself before the first charge (on a power-up visit; a spell visit stays itself: ChexySpells) */
     public static final float CHARGE_AT = 6f;
     /** how long a charge-up lasts */
     public static final float CHARGE_TIME = 1.8f;
@@ -55,6 +55,15 @@ public final class Chexy
     public static final float CHARGE2_AT = GOLD_AT + 26f;
     /** the flash into the blue form, which then holds until the visit ends (a visit lasts 60-90 s) */
     public static final float BLUE_AT = CHARGE2_AT + CHARGE_TIME;
+
+    /**
+     * The power-up's clock for a visit: the visit's age on a power-up visit, -1 (the base form throughout) on a spell
+     * visit. Each visit is one or the other, never both (owner).
+     */
+    public static float powerAge(boolean spellVisit, float visitAge)
+    {
+        return spellVisit ? -1f : visitAge;
+    }
 
     /** which form it is in, this many seconds into its visit (below 0: no visit, always the base form) */
     public static int form(float age)
@@ -337,6 +346,17 @@ public final class Chexy
      */
     public static void paint(Graphics2D g, float cx, float cy, float t, float drift, float size, boolean calm, float age)
     {
+        paint(g, cx, cy, t, drift, size, calm, age, -1f);
+    }
+
+    /**
+     * As above, for a visit on either path (owner: each visit either powers up or casts spells, never both):
+     * {@code age} the seconds into a power-up visit (below 0: none, the base form throughout), {@code spellAge} the
+     * seconds into a spell visit (below 0: no spells; ChexySpells). See {@link #powerAge} and ChexySpells.spellAge.
+     */
+    public static void paint(Graphics2D g, float cx, float cy, float t, float drift, float size, boolean calm, float age,
+        float spellAge)
+    {
         Scratch k = SCRATCH.get();
         float s = size / SIZE;
         k.strokes(s);
@@ -389,6 +409,9 @@ public final class Chexy
         }
         g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
             interp == null ? RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR : interp);
+        // the soft glow while it casts the flower spell
+        float flowers = spellAge < 0 ? -1f : ChexySpells.flowerPhase(spellAge);
+        if (flowers >= 0) ChexySpells.paintCastGlow(g, cx, cy, r, flowers);
 
         // the aura: behind the rings. It flares up after a flash, swells in the second charge, and a faint gold
         // flicker already starts to show through in the first charge
@@ -586,6 +609,9 @@ public final class Chexy
 
         if (charge > 0) sparks(g, k, cx, cy, r, t, s, charge, form == BASE ? GOLD : BLUE, calm);
         if (flash > 0 || since < 0.6f) burst(g, k, cx, cy, r, s, flash, since, form);
+        // the barrier, over everything
+        float shield = spellAge < 0 ? -1f : ChexySpells.barrierPhase(spellAge);
+        if (shield >= 0) ChexySpells.paintBarrier(g, cx, cy, r * 1.3f, shield, t, form, calm);
 
         g.setComposite(oldComp);
         g.setStroke(oldStroke);
