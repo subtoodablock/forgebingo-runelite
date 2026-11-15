@@ -251,8 +251,14 @@ public final class ApiClient
             {
                 return null;
             }
-            byte[] bytes = rb.bytes();
-            return bytes.length > MAX_ICON_BYTES ? null : bytes;
+            // never buffer more than the limit, whatever Content-Length says (it is absent on chunked replies)
+            okio.BufferedSource source = rb.source();
+            source.request(MAX_ICON_BYTES + 1);
+            if (source.getBuffer().size() > MAX_ICON_BYTES)
+            {
+                return null;
+            }
+            return source.readByteArray();
         }
         catch (IOException ex)
         {
@@ -332,8 +338,8 @@ public final class ApiClient
                 ApiModels.ErrorBody eb = gson.fromJson(text, ApiModels.ErrorBody.class);
                 if (eb != null)
                 {
-                    code = eb.error;
-                    error = eb.message;
+                    code = clip(eb.error);
+                    error = clip(eb.message);
                 }
             }
             catch (RuntimeException ignored)
@@ -359,6 +365,14 @@ public final class ApiClient
         if (v instanceof ApiModels.CatalogueResponse) return (T) Sanitizer.catalogue((ApiModels.CatalogueResponse) v);
         if (v instanceof ApiModels.HelloResponse) return (T) Sanitizer.hello((ApiModels.HelloResponse) v);
         return v;
+    }
+
+    /** Server error text is shown to the player and kept with queued events: keep it short. */
+    private static String clip(String s)
+    {
+        if (s == null) return null;
+        String t = Sanitizer.str(s);
+        return t == null || t.length() <= 200 ? t : t.substring(0, 200);
     }
 
     private static String readLimited(ResponseBody rb) throws IOException

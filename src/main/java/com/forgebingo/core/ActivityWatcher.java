@@ -16,6 +16,7 @@ import java.util.Map;
  *   <li>another item left the backpack in the same tick (an item changing form: a looting bag closing, a tablet being
  *       made, a weapon being uncharged, a cape taken apart) unless it was a currency being spent;</li>
  *   <li>the same item left another container (bank, equipment, storage, looting bag, trade) around that tick;</li>
+ *   <li>the worn equipment changed around that tick (taking gear off; a worn item may carry another id);</li>
  *   <li>a ground item of that id vanished next to the player around that tick (a pickup: PvP loot never counts);</li>
  *   <li>a Grand Exchange offer changed around that tick (a collect);</li>
  *   <li>the player is in the Wilderness or on a PvP world.</li>
@@ -87,6 +88,21 @@ public final class ActivityWatcher
         geTick = tick;
     }
 
+    /** ticks in which the worn equipment changed: anything reaching the backpack then came off the player */
+    private final java.util.Set<Integer> wornTicks = new java.util.HashSet<>();
+
+    /** The worn equipment changed this tick (equip, unequip, swap). */
+    public void onWornChanged(int tick)
+    {
+        wornTicks.add(tick);
+    }
+
+    private boolean nearWornChange(int tick)
+    {
+        for (int t = tick - MOVE_WINDOW; t <= tick + MOVE_WINDOW; t++) if (wornTicks.contains(t)) return true;
+        return false;
+    }
+
     /** A non-currency item left the backpack this tick (see the class comment). */
     public void onItemsLeftInventory(int tick)
     {
@@ -117,16 +133,18 @@ public final class ActivityWatcher
             it.remove();
             if (pvp || near(lootSeen, p.itemId, p.tick, LOOT_WINDOW, 1) || near(leftContainer, p.itemId, p.tick, MOVE_WINDOW, MOVE_WINDOW)
                 || near(pickedUp, p.itemId, p.tick, MOVE_WINDOW, MOVE_WINDOW) || Math.abs(p.tick - geTick) <= MOVE_WINDOW
-                || transformTicks.contains(p.tick) || transformTicks.contains(p.tick - 1))
+                || transformTicks.contains(p.tick) || transformTicks.contains(p.tick - 1) || nearWornChange(p.tick))
             {
                 continue;
             }
             out.add(new Drop(p.itemId, p.quantity, p.activity));
         }
-        prune(lootSeen, tick);
+        // kept for the whole loot window: a chest's loot may be claimed minutes after the chest reported it
+        lootSeen.values().removeIf(t -> t < tick - LOOT_WINDOW);
         prune(leftContainer, tick);
         prune(pickedUp, tick);
         transformTicks.removeIf(t -> t < tick - KEEP);
+        wornTicks.removeIf(t -> t < tick - KEEP);
         return out;
     }
 

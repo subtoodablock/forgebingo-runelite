@@ -98,28 +98,19 @@ public interface ForgeBingoConfig extends Config
         return true;
     }
 
-    @ConfigItem(
-        keyName = "screenshotOnMatch",
-        name = "Screenshot on matched drop",
-        description = "After the server confirms a drop counts for your team, upload a game-window screenshot as proof. On by default.",
-        warning = "Screenshots of your game window (which may show chat) are sent to the ForgeBingo server, only after a drop is confirmed as counting.",
-        position = 2
-    )
-    default boolean screenshotOnMatch()
-    {
-        return true;
-    }
+    // "Screenshot on matched drop" was removed (owner, 2026-11-12): a matched drop always sends a game-window
+    // screenshot as proof, so the bingo master can rely on one being there. The Plugin Hub warning says so.
 
     @ConfigItem(
         keyName = "screenshotSidebar",
         name = "Include sidebar in screenshots",
-        description = "Proof screenshots show the whole RuneLite window while the ForgeBingo panel is open in the sidebar (other plugin panels are never captured). Off by default.",
-        warning = "Your whole RuneLite window (game, sidebar and the ForgeBingo panel) will be in your proof screenshots. Organizers and reviewers of your event can see them. Turn this on?",
+        description = "Proof screenshots show the whole RuneLite window (game, sidebar and the ForgeBingo panel) while the ForgeBingo panel is open in the sidebar. Other plugin panels are never captured. Organizers and reviewers of your event can see these screenshots. On by default; turn off to send the game picture only.",
         position = 3
     )
+    // on by default (owner, 2026-11-14); the confirm-before-turning-on prompt went with it
     default boolean screenshotSidebar()
     {
-        return false;
+        return true;
     }
 
     /** A server address other than the ForgeBingo one that the player approved in the warning dialog. */

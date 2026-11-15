@@ -67,6 +67,8 @@ public final class ApiModels
         /** event | account */
         public String keyScope;
         public List<Membership> memberships;
+        /** the newest plugin version players can get (null from an older server) */
+        public String latestPluginVersion;
     }
 
     /** One entry of {@code GET /v1/boards}. {@code teamBoardId} equals the team id. */
@@ -91,8 +93,10 @@ public final class ApiModels
         @Override
         public String toString()
         {
+            // shown in a Swing list, which renders text starting with <html> as HTML: never let a name do that
             String e = eventName == null ? "(unnamed)" : eventName;
-            return teamName == null ? e : e + " - " + teamName;
+            String s = teamName == null ? e : e + " - " + teamName;
+            return s.replace('<', '(').replace('>', ')');
         }
     }
 
@@ -122,6 +126,8 @@ public final class ApiModels
         public Boolean eachItem;
         /** groups of item ids where any one counts for the same sub-task (like the website's "Any one: ...") */
         public List<List<Integer>> itemGroups;
+        /** with eachItem: item id -> amount, when the items need different amounts; null = shared equally */
+        public java.util.Map<String, Integer> itemQtys;
         /** per sub-task progress, keyed like the server's item_slot: "i&lt;itemId&gt;" or "g&lt;groupIndex&gt;" */
         public java.util.Map<String, SlotProgress> itemProgress;
     }

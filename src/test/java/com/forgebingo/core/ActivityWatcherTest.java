@@ -34,6 +34,22 @@ public class ActivityWatcherTest
         assertEquals(1, w.flush(51, false).size());
     }
 
+    /** owner, 2026-11-14: taking off an Elemental amulet (whose worn form has another id) counted as an Archive reward */
+    @Test
+    public void gearTakenOffNeverCountsEvenWithAnotherId()
+    {
+        ActivityWatcher w = new ActivityWatcher();
+        w.onWornChanged(300);
+        w.onInventoryAdded(34428, 1, 300); // Elemental amulet back in the backpack
+        assertTrue(w.flush(301, false).isEmpty());
+        w.onWornChanged(400);
+        w.onInventoryAdded(34428, 1, 401); // a tick later still counts as the same swap
+        assertTrue(w.flush(402, false).isEmpty());
+        // a real reward with no gear change still counts
+        w.onInventoryAdded(34428, 1, 500);
+        assertEquals(1, w.flush(501, false).size());
+    }
+
     @Test
     public void bankWithdrawEquipmentAndTradeAreMoves()
     {

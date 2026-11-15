@@ -295,6 +295,10 @@ class ForgeBingoPanel extends PluginPanel
         tilesBar.setForeground(PanelUi.GOLD_DARK);
         boardCard.add(left(teamLabel));
         boardCard.add(left(eventLabel));
+        reviewLabel.setFont(smallFont());
+        reviewLabel.setForeground(WAIT);
+        reviewLabel.setVisible(false);
+        boardCard.add(left(reviewLabel));
         boardCard.add(Box.createVerticalStrut(7));
         boardCard.add(fullWidth(tilesBar, 17));
         boardCard.setVisible(false);
@@ -359,6 +363,8 @@ class ForgeBingoPanel extends PluginPanel
     }
 
     private final JLabel headToggle = new JLabel("Hide");
+    /** how much of the team's proof is waiting for a reviewer (player request, 2026-11-14) */
+    private final JLabel reviewLabel = new JLabel(" ");
     private final Component identityGap = gap(6);
     private boolean headerCollapsed;
 
@@ -552,6 +558,19 @@ class ForgeBingoPanel extends PluginPanel
         tilesBar.setValue(done);
         tilesBar.setString(blackout ? "BLACKOUT! " + done + " / " + total : done + " / " + total + " tiles done");
         tilesBar.setForeground(blackout ? PanelUi.GREEN_DARK : PanelUi.GOLD_DARK);
+        // what is waiting for a reviewer, across the whole board: a screenshot just sent shows up here
+        int waitingTasks = 0;
+        for (ApiModels.Tile t : board.tiles)
+        {
+            if (t == null || t.tasks == null) continue;
+            for (ApiModels.Task k : t.tasks) if (k != null && k.pendingQty > 0) waitingTasks++;
+        }
+        reviewLabel.setVisible(waitingTasks > 0);
+        if (waitingTasks > 0)
+        {
+            reviewLabel.setText(wrapHtml("Being reviewed: " + waitingTasks + (waitingTasks == 1 ? " task" : " tasks") + " waiting", CARD_TEXT));
+            reviewLabel.setToolTipText("Proof for " + (waitingTasks == 1 ? "this task" : "these tasks") + " is with the reviewers. It counts once they approve it.");
+        }
         boardCard.setVisible(true);
 
         tileLabels.clear();
@@ -995,6 +1014,9 @@ class ForgeBingoPanel extends PluginPanel
             box.add(gap(3));
             // automatic tasks need no explanation (owner, 2026-11-12); only manual ones say how to prove them
             if (k.sourceType == null || "manual".equals(k.sourceType)) box.add(left(cardText(trackingText(k), MUTED, CARD_TEXT - 44)));
+        }
+        // the button stays on a finished task too (owner, 2026-11-14): proof can still be sent after it is complete
+        {
             if (!secret && k.id != null)
             {
                 // RuneLite sends its own proof: a game screenshot straight to this task, waiting for review

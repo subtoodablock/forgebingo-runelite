@@ -33,6 +33,8 @@ public final class QueueProcessor
     private final LongSupplier clock;
     private final Random random;
     private volatile boolean authPaused;
+    /** the server said slow down (or could not be reached): nothing is sent before this time */
+    private volatile long holdUntilMillis;
 
     public QueueProcessor(OfflineQueue queue, Function<GameEvent, ApiResult<ApiModels.EventResult>> sender,
         Listener listener, LongSupplier clock, Random random)
@@ -47,6 +49,7 @@ public final class QueueProcessor
     public void resumeAfterAuthChange()
     {
         authPaused = false;
+        holdUntilMillis = 0;
         queue.retryAllNow(clock.getAsLong());
     }
 
@@ -66,6 +69,10 @@ public final class QueueProcessor
         if (authPaused)
         {
             return queue.size() == 0 ? -1 : 60_000L;
+        }
+        if (now < holdUntilMillis)
+        {
+            return queue.size() == 0 ? -1 : holdUntilMillis - now;
         }
         String lastError = null;
         for (QueuedEvent q : queue.due(now))
@@ -105,6 +112,7 @@ public final class QueueProcessor
                 lastError = r.describe();
                 if (r.status == 429 || r.status == 0)
                 {
+                    holdUntilMillis = clock.getAsLong() + delay;
                     break; // do not hammer: the rest would likely fail the same way
                 }
             }
@@ -122,6 +130,6 @@ public final class QueueProcessor
         {
             min = Math.min(min, q.nextAttemptAtMillis);
         }
-        return all.isEmpty() ? -1 : Math.max(1_000L, min - now);
+        return all.isEmpty() ? -1 : Math.max(1_000L, Math.max(min, holdUntilMillis) - now);
     }
 }

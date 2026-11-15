@@ -18,6 +18,7 @@ import com.forgebingo.core.QueuedEvent;
 import com.forgebingo.core.Sanitizer;
 import com.forgebingo.core.ScreenshotStamp;
 import com.forgebingo.core.ScreenshotEncode;
+import com.forgebingo.core.ScreenshotStack;
 import com.forgebingo.core.WindowShot;
 import com.forgebingo.core.SourceClassifier;
 import com.forgebingo.core.TileInfo;
@@ -97,7 +98,7 @@ import okhttp3.OkHttpClient;
 @Slf4j
 public class ForgeBingoPlugin extends Plugin
 {
-    static final String VERSION = "2.0.0";
+    static final String VERSION = "2.0.1";
     private static final long BOARD_POLL_SECONDS = 8;
     /** spot animation id of the level-up fireworks (the one the game plays at 99) */
     private static final int LEVEL_UP_FIREWORKS = 199;
@@ -106,6 +107,8 @@ public class ForgeBingoPlugin extends Plugin
     private static final int MAX_SCREENSHOTS = 8;
     /** gameval InventoryID.INV (the backpack). */
     private static final int INVENTORY_CONTAINER_ID = 93;
+    /** worn equipment (InventoryID.WORN) */
+    private static final int WORN_CONTAINER_ID = 94;
     private static final long CATALOGUE_REFRESH_MILLIS = 6 * 60 * 60_000L;
     private static final long CATALOGUE_RETRY_MILLIS = 5 * 60_000L;
     private static final int MAX_BOARD_ITEM_NAMES = 2_000;
@@ -192,17 +195,17 @@ public class ForgeBingoPlugin extends Plugin
      */
     private static final class Screenshot
     {
-        final byte[] raw;
+        /** the frames, in the order they were asked for (a chest's loot window is taken twice); gaps are null */
+        final byte[][] raw;
+        final java.time.ZonedDateTime[] taken;
         final long at;
-        final String player;
-        final java.time.ZonedDateTime taken;
+        volatile String player;
 
-        Screenshot(byte[] raw, long at, String player, java.time.ZonedDateTime taken)
+        Screenshot(int shots, long at)
         {
-            this.raw = raw;
+            this.raw = new byte[shots][];
+            this.taken = new java.time.ZonedDateTime[shots];
             this.at = at;
-            this.player = player;
-            this.taken = taken;
         }
     }
 
@@ -270,6 +273,13 @@ public class ForgeBingoPlugin extends Plugin
         celebrated.clear();
         blackoutShown.clear();
         currentBoard = null;
+        boardVersions.clear(); // or the next start would think the board is already loaded and never show it
+        knownBoards = null;
+        helloEvents = null;
+        archiveChests.reset();
+        wasInstance = false;
+        raidShot = null;
+        raidKcResult = null;
         if (navigationButton != null) clientToolbar.removeNavigation(navigationButton);
         navigationButton = null;
         ForgeBingoPanel closing = panel;
@@ -364,6 +374,8 @@ public class ForgeBingoPlugin extends Plugin
                 });
                 helloPending = true;
                 helloNotBefore = 0;
+                helloEvents = null; // the hello this triggers asks for the board again (it can put the player on a team)
+                boardFailures = 0;  // a fresh key or Refresh never waits out the back-off of earlier failures
                 catalogueTriedAt = 0;
                 loadCatalogue();
                 pollBoardSafely();
@@ -436,13 +448,22 @@ public class ForgeBingoPlugin extends Plugin
         ApiResult<ApiModels.HelloResponse> r = a.hello(rsn, accountHash);
         if (r.ok() && r.body != null)
         {
-            List<ConnectionStatus.Line> lines = ConnectionStatus.fromHello(r.body);
+            List<ConnectionStatus.Line> lines = new ArrayList<>(ConnectionStatus.fromHello(r.body));
+            // the server knows the newest version players can get: say so when this one is behind
+            if (com.forgebingo.core.Versions.newer(r.body.latestPluginVersion, VERSION))
+            {
+                lines.add(new ConnectionStatus.Line(ConnectionStatus.Level.WARNING,
+                    "A newer ForgeBingo plugin is out (" + r.body.latestPluginVersion + ", you have " + VERSION + "). Restart RuneLite to update."));
+            }
             notifyPanel(p -> p.setIdentity(lines));
             // Logging in can put the player on a team (the organizer listed their RSN): fetch the boards straight
             // away when the server reports a bingo we did not know about, so the new board shows without a wait.
             java.util.Set<String> now = new java.util.HashSet<>();
             if (r.body.memberships != null) for (ApiModels.Membership m : r.body.memberships) if (m != null && m.eventId != null) now.add(m.eventId);
-            boolean newBingo = helloEvents != null && !helloEvents.containsAll(now);
+            // The first hello after connecting (a key just pasted, Refresh, a login) can itself put the player on a team,
+            // and the board was asked for a moment before it: ask again now instead of waiting (owner, 2026-11-14).
+            boolean firstHello = helloEvents == null;
+            boolean newBingo = !now.isEmpty() && (firstHello || !helloEvents.containsAll(now));
             helloEvents = now;
             // bingos whose board hasn't opened yet: the side panel counts down to their start
             List<ApiModels.Membership> waiting = new ArrayList<>();
@@ -450,7 +471,9 @@ public class ForgeBingoPlugin extends Plugin
             notifyPanel(p -> p.setUpcoming(waiting));
             if (newBingo)
             {
-                notice("You were added to a new bingo board.", false);
+                if (!firstHello) notice("You were added to a new bingo board.", false);
+                boardVersions.clear();
+                boardFailures = 0;
                 pollBoardSafely();
             }
             for (ConnectionStatus.Line l : lines)
@@ -502,8 +525,7 @@ public class ForgeBingoPlugin extends Plugin
                 byte[] bytes = a == null ? null : a.icon(proxyPath);
                 if (bytes != null)
                 {
-                    BufferedImage read = ImageIO.read(new java.io.ByteArrayInputStream(bytes));
-                    if (read != null && read.getWidth() <= 256 && read.getHeight() <= 256) got = read;
+                    got = readSmallImage(bytes);
                 }
             }
             catch (java.io.IOException | RuntimeException ex)
@@ -938,6 +960,7 @@ public class ForgeBingoPlugin extends Plugin
         GameEvent ev = base(GameEvent.NPC);
         petDetector.onSource(npc.getName(), client.getTickCount());
         ev.npcId = npc.getId();
+        ev.npcIndex = npc.getIndex();
         ev.npcName = npc.getName();
         addItems(ev, e.getItems());
         submit(ev, true);
@@ -962,6 +985,8 @@ public class ForgeBingoPlugin extends Plugin
         if (recordType.equals("NPC")) return;
         // Wilderness loot key chests never count (they return other players' items)
         if (SourceClassifier.ignored(e.getName())) return;
+        // The Fractured Archive's chests are read straight from the loot window (onWidgetLoaded): both of them
+        if (ARCHIVE_LOOT_NAME.equalsIgnoreCase(e.getName())) return;
         if (recordType.equals("PICKPOCKET"))
         {
             // Pickpocketing (e.g. a Blood shard from a Vyre): sent only when the loot holds an item the board's
@@ -986,7 +1011,9 @@ public class ForgeBingoPlugin extends Plugin
         String tier = GameEvent.CLUE.equals(type) ? SourceClassifier.clueTier(e.getName()) : null;
         ev.sourceName = tier != null ? tier : e.getName();
         addItems(ev, e.getItems());
-        submit(ev, true);
+        // Raid, Barrows, Moons and other reward chests post their loot as the loot window opens (owner, 2026-11-12):
+        // the proof is that window, taken twice a moment apart so one of the two shows it fully drawn.
+        submit(ev, true, !GameEvent.CLUE.equals(type));
     }
 
     /** "You pick the Master Farmer's pocket." (also "You pick the Elf's pocket.") */
@@ -1009,12 +1036,93 @@ public class ForgeBingoPlugin extends Plugin
         submit(ev, true);
     }
 
+    /** "Name found something special: Item" (Theatre of Blood, Tombs of Amascut and raids worded the same way) */
+    private static final java.util.regex.Pattern FOUND_SPECIAL = java.util.regex.Pattern.compile("^(.{1,12}?) found something special: (.+)$");
+    /** Chambers of Xeric: a "Special loot:" line, then "Name - Item" on the next */
+    private static final java.util.regex.Pattern SPECIAL_LINE = java.util.regex.Pattern.compile("^(.{1,12}?) - (.+)$");
+    private static final long RAID_SHOT_TTL_MILLIS = 15 * 60_000L;
+    /**
+     * A raid's completion that counted for a kill-count tile (owner, 2026-11-13): the kill message comes before the
+     * reward chest, so the chest opened next is photographed and added to those same tiles as proof.
+     */
+    private volatile ApiModels.EventResult raidKcResult;
+    private volatile long raidKcAt;
+
+    /** Raids whose completion message comes before their reward chest is opened. */
+    static boolean raidWithChest(String name)
+    {
+        if (name == null) return false;
+        String n = name.toLowerCase(java.util.Locale.ROOT);
+        return n.contains("chambers of xeric") || n.contains("theatre of blood") || n.contains("tombs of amascut") || n.contains("fractured archive");
+    }
+
+    private ApiModels.EventResult freshRaidKc()
+    {
+        ApiModels.EventResult r = raidKcResult;
+        return r != null && System.currentTimeMillis() - raidKcAt < RAID_SHOT_TTL_MILLIS ? r : null;
+    }
+    private volatile int specialLootTick = -100;
+    /** the frame taken when a raid's chat named us for special loot; goes in front of that chest's two shots */
+    private volatile byte[] raidShot;
+    private volatile java.time.ZonedDateTime raidShotTaken;
+    private volatile long raidShotAt;
+
+    /**
+     * The purple moment (owner, 2026-11-12): when a raid's chat line says we found something special, keep a
+     * screenshot of it. It is only ever sent together with that raid's chest loot, as the first of its proof shots.
+     */
+    private void watchSpecialLoot(String raw, int tick)
+    {
+        if (raw == null) return;
+        String msg = net.runelite.client.util.Text.removeTags(raw).replace(' ', ' ').trim();
+        if (msg.equalsIgnoreCase("Special loot:"))
+        {
+            specialLootTick = tick;
+            return;
+        }
+        java.util.regex.Matcher m = FOUND_SPECIAL.matcher(msg);
+        if (!m.find())
+        {
+            if (tick - specialLootTick > 2) return;
+            m = SPECIAL_LINE.matcher(msg);
+            if (!m.find()) return;
+        }
+        Player me = client.getLocalPlayer();
+        String mine = me == null ? null : Sanitizer.normalizeRsn(me.getName());
+        if (mine == null || !mine.equalsIgnoreCase(Sanitizer.normalizeRsn(m.group(1)))) return;
+        // a moment later, so the chat line (and the purple light where the raid shows one) is drawn
+        executor.schedule(() -> {
+            if (!running) return;
+            drawManager.requestNextFrameListener(image -> {
+                if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen()) return;
+                executor.execute(() -> {
+                    try
+                    {
+                        BufferedImage img = ImageUtil.bufferedImageFromImage(image);
+                        if (config.screenshotSidebar()) img = withWindow(img);
+                        byte[] shot = ScreenshotEncode.jpeg(img, ApiClient.MAX_SCREENSHOT_BYTES);
+                        if (shot == null) return;
+                        raidShotTaken = java.time.ZonedDateTime.now();
+                        raidShotAt = System.currentTimeMillis();
+                        raidShot = shot;
+                    }
+                    catch (Exception ex)
+                    {
+                        log.debug("special loot screenshot failed", ex);
+                    }
+                });
+            });
+        }, 600, TimeUnit.MILLISECONDS);
+    }
+
     @Subscribe
     public void onChatMessage(ChatMessage e)
     {
         String type = e.getType() == null ? "" : e.getType().name();
         String msg = e.getMessage();
         int tick = client.getTickCount();
+        // only lines the game itself writes: a player typing the same words in chat must not set this off
+        if (type.equals("GAMEMESSAGE") || type.equals("FRIENDSCHATNOTIFICATION") || type.equals("SPAM")) watchSpecialLoot(msg, tick);
         if (type.equals("CLAN_MESSAGE") || type.equals("CLAN_GIM_MESSAGE") || type.equals("FRIENDSCHATNOTIFICATION"))
         {
             // Clan pet broadcasts are the only line that names a duplicate pet. Only our own.
@@ -1060,7 +1168,8 @@ public class ForgeBingoPlugin extends Plugin
             if (!config.sendKc()) return;
             GameEvent ev = base(GameEvent.KC);
             ev.sourceName = k.boss; // one event per kill; the server matches the name against its catalogue
-            submit(ev, false);
+            // a kill that counts for a kill-count tile gets its screenshot too (owner, 2026-11-13)
+            submit(ev, true);
         });
         ChatParsers.clueCompletion(msg).ifPresent(c -> {
             petDetector.onSource(c.sourceName(), tick);
@@ -1068,7 +1177,7 @@ public class ForgeBingoPlugin extends Plugin
             // One completion = one kc event for the clue_<tier> catalogue source (the casket loot is a separate clue event).
             GameEvent ev = base(GameEvent.KC);
             ev.sourceName = c.sourceName();
-            submit(ev, false);
+            submit(ev, true);
         });
     }
 
@@ -1081,6 +1190,13 @@ public class ForgeBingoPlugin extends Plugin
         {
             Map<Integer, Integer> after = containerCounts(c);
             Map<Integer, Integer> was = lastContainers.put(e.getContainerId(), after);
+            if (e.getContainerId() == WORN_CONTAINER_ID && !after.equals(was))
+            {
+                // Worn gear changed (equip, unequip, swap): whatever reaches the backpack now came off the player, even
+                // when the worn item has another id than its backpack form (an Elemental amulet taken off counted as a
+                // Fractured Archive reward, owner 2026-11-14).
+                activityWatcher.onWornChanged(client.getTickCount());
+            }
             if (was != null && e.getContainerId() == net.runelite.api.gameval.InventoryID.SEED_BOX)
             {
                 // An open seed box takes pickpocketed seeds straight in, so RuneLite's loot tracker never reports
@@ -1223,14 +1339,79 @@ public class ForgeBingoPlugin extends Plugin
         }
     }
 
+    /**
+     * Decodes a tile icon only after its header says it is small: a tiny file can claim a huge picture, and decoding
+     * that would use up the client's memory.
+     */
+    private static BufferedImage readSmallImage(byte[] bytes) throws java.io.IOException
+    {
+        try (javax.imageio.stream.ImageInputStream in = ImageIO.createImageInputStream(new java.io.ByteArrayInputStream(bytes)))
+        {
+            if (in == null) return null;
+            java.util.Iterator<javax.imageio.ImageReader> readers = ImageIO.getImageReaders(in);
+            if (!readers.hasNext()) return null;
+            javax.imageio.ImageReader reader = readers.next();
+            try
+            {
+                reader.setInput(in, true, true);
+                if (reader.getWidth(0) > 256 || reader.getHeight(0) > 256) return null;
+                return reader.read(0);
+            }
+            finally
+            {
+                reader.dispose();
+            }
+        }
+    }
+
+    /** what RuneLite's loot tracker calls The Fractured Archive's chest loot (it reports only the first chest opened) */
+    private static final String ARCHIVE_LOOT_NAME = "Fractured Archive";
+    private final com.forgebingo.core.ChestOpens archiveChests = new com.forgebingo.core.ChestOpens();
+    private boolean wasInstance;
+    private boolean freshLogin = true;
+
+    /**
+     * The Fractured Archive has two reward chests: the standard one, and a second for whoever rolled the unique
+     * (owner, 2026-11-13). Each one opened sends its own loot with the loot window as proof.
+     */
+    @Subscribe
+    public void onWidgetLoaded(net.runelite.api.events.WidgetLoaded e)
+    {
+        if (e.getGroupId() != net.runelite.api.gameval.InterfaceID.TFA_CHESTS) return;
+        ItemContainer c = client.getItemContainer(net.runelite.api.gameval.InventoryID.TFA_CHESTS);
+        if (c == null) return;
+        Map<Integer, Integer> contents = new java.util.LinkedHashMap<>();
+        for (net.runelite.api.Item i : c.getItems())
+        {
+            if (i == null || i.getId() <= 0 || i.getQuantity() < 1) continue;
+            contents.merge(itemManager.canonicalize(i.getId()), i.getQuantity(), Integer::sum);
+        }
+        Map<Integer, Integer> fresh = archiveChests.opened(contents);
+        if (fresh.isEmpty()) return;
+        petDetector.onSource(ARCHIVE_LOOT_NAME, client.getTickCount());
+        if (!config.sendChestLoot()) return;
+        GameEvent ev = base(GameEvent.RAID_CHEST);
+        ev.sourceName = ARCHIVE_LOOT_NAME;
+        for (Map.Entry<Integer, Integer> f : fresh.entrySet())
+        {
+            ev.addItem(f.getKey(), f.getValue());
+            activityWatcher.onLoot(f.getKey(), client.getTickCount());
+        }
+        submit(ev, true, true);
+    }
+
     @Subscribe
     public void onGameStateChanged(GameStateChanged e)
     {
+        if (e.getGameState() == GameState.LOGIN_SCREEN || e.getGameState() == GameState.HOPPING) archiveChests.reset();
         // logging out or hopping closes the board (map LOADING does not; the input ignores clicks until LOGGED_IN)
         if (e.getGameState() == GameState.LOGIN_SCREEN || e.getGameState() == GameState.HOPPING || e.getGameState() == GameState.CONNECTION_LOST) boardOverlay.close();
         if (e.getGameState() == GameState.LOGIN_SCREEN || e.getGameState() == GameState.HOPPING) requestWomUpdate();
-        if (e.getGameState() == GameState.LOGGED_IN)
+        // LOGGED_IN also follows every map load: only a real login (or hop) needs the account verified again
+        if (e.getGameState() == GameState.LOGIN_SCREEN || e.getGameState() == GameState.HOPPING || e.getGameState() == GameState.LOGGING_IN) freshLogin = true;
+        if (e.getGameState() == GameState.LOGGED_IN && freshLogin)
         {
+            freshLogin = false;
             helloPending = true; // another account may have logged in: verify again
             helloNotBefore = 0;
         }
@@ -1246,6 +1427,13 @@ public class ForgeBingoPlugin extends Plugin
     public void onGameTick(GameTick e)
     {
         int tick = client.getTickCount();
+        // leaving (or entering) a raid's instance: the next Archive chests belong to another raid
+        boolean instance = client.getTopLevelWorldView() != null && client.getTopLevelWorldView().isInstance();
+        if (instance != wasInstance)
+        {
+            wasInstance = instance;
+            archiveChests.reset();
+        }
         maybeHello();
         if (petDetector.wantsFollower())
         {
@@ -1324,6 +1512,12 @@ public class ForgeBingoPlugin extends Plugin
 
     private void submit(GameEvent ev, boolean maybeScreenshot)
     {
+        submit(ev, maybeScreenshot, false);
+    }
+
+    /** @param chestWindow the loot came from a reward chest whose loot window is on screen right now */
+    private void submit(GameEvent ev, boolean maybeScreenshot, boolean chestWindow)
+    {
         if (!running || queue == null || !Sanitizer.validRsn(ev.rsn) || ev.accountHash == null || api == null || !api.configured())
         {
             return;
@@ -1340,9 +1534,10 @@ public class ForgeBingoPlugin extends Plugin
             return;
         }
         log.debug("queue event {} {}", ev.sourceType, ev.label());
-        if (maybeScreenshot && config.screenshotOnMatch() && couldCount(ev))
+        // a raid chest is photographed when its loot could count, or when the raid itself just counted for a tile
+        if (maybeScreenshot && (couldCount(ev) || (chestWindow && raidWithChest(ev.sourceName) && freshRaidKc() != null)))
         {
-            captureScreenshot(ev.id);
+            captureScreenshot(ev.id, shotDelays(ev.sourceType, ev.sourceName, chestWindow), chestWindow);
         }
         List<QueuedEvent> evicted = queue.add(new QueuedEvent(ev, System.currentTimeMillis()));
         for (QueuedEvent q : evicted) notice("Queue full, dropped oldest event: " + q.event.label(), true);
@@ -1407,30 +1602,81 @@ public class ForgeBingoPlugin extends Plugin
         return false;
     }
 
-    private void captureScreenshot(String eventId)
+    private void captureScreenshot(String eventId, long[] delays, boolean chest)
     {
         // only in game, and never with the bank PIN keypad on screen (its layout would be in the proof)
         if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen()) return;
-        // marked before the frame arrives: the server's answer can come back first, and the upload waits for this
-        shotsInProgress.add(eventId);
-        // Wait ~2 game ticks before taking it (owner, 2026-11-12): by then the drop's chat message, the loot on the
-        // ground and the collection log pop-up are all on screen, so the proof shows the drop clearly.
-        executor.schedule(() -> requestDropFrame(eventId), SCREENSHOT_DELAY_MS, TimeUnit.MILLISECONDS);
+        long now = System.currentTimeMillis();
+        screenshots.values().removeIf(s -> now - s.at > SCREENSHOT_TTL_MILLIS);
+        // full: drop the oldest instead of skipping this one (the newest drop is the likeliest to count)
+        while (screenshots.size() >= MAX_SCREENSHOTS)
+        {
+            String oldest = null;
+            long at = Long.MAX_VALUE;
+            for (Map.Entry<String, Screenshot> s : screenshots.entrySet()) if (s.getValue().at < at) { at = s.getValue().at; oldest = s.getKey(); }
+            if (oldest == null) break;
+            screenshots.remove(oldest);
+        }
+        // a raid chest opened soon after the chat named us for special loot: that moment goes first
+        byte[] before = chest ? raidShot : null;
+        java.time.ZonedDateTime beforeTaken = raidShotTaken;
+        boolean lead = before != null && beforeTaken != null && now - raidShotAt < RAID_SHOT_TTL_MILLIS;
+        if (chest) raidShot = null;
+        int off = lead ? 1 : 0;
+        Screenshot holder = new Screenshot(delays.length + off, now);
+        if (lead)
+        {
+            holder.raw[0] = before;
+            holder.taken[0] = beforeTaken;
+        }
+        screenshots.put(eventId, holder);
+        for (int i = 0; i < delays.length; i++)
+        {
+            int index = i + off;
+            // marked before the frame arrives: the server's answer can come back first, and the upload waits for this
+            shotsInProgress.add(eventId + "#" + index);
+            executor.schedule(() -> requestDropFrame(eventId, index), delays[i], TimeUnit.MILLISECONDS);
+        }
     }
 
-    /** milliseconds between spotting a drop and taking its screenshot */
-    private static final long SCREENSHOT_DELAY_MS = 1200;
+    /**
+     * Milliseconds between spotting a drop or kill and taking its screenshot(s). The loot notice and the "kill count"
+     * chat line arrive in the same game tick as the loot (measured on live Zulrah, Giant Mole, Vorkath and clue
+     * events: 5-34 ms apart), so a picture a moment later shows the loot on the ground and the chat line. A reward
+     * chest's two pictures go up stacked as one image, see ScreenshotStack.
+     */
+    static long[] shotDelays(String sourceType, String sourceName, boolean chestWindow)
+    {
+        // Two pictures only for reward chests (raids, Barrows, Moons); clues, boss drops and kill counts get one
+        // (owner, 2026-11-14).
+        if (isClue(sourceType, sourceName)) return CLUE_SHOT_DELAYS_MS;
+        return chestWindow ? CHEST_SHOT_DELAYS_MS : SINGLE_SHOT_DELAYS_MS;
+    }
+    /** one picture of a drop or kill: a tick on, so the loot is drawn on the ground before it can be picked up */
+    static final long[] SINGLE_SHOT_DELAYS_MS = {600};
+
+    /** a clue casket's loot, or the "You have completed N ... Treasure Trails" count that comes with it */
+    static boolean isClue(String sourceType, String sourceName)
+    {
+        return GameEvent.CLUE.equals(sourceType)
+            || (GameEvent.KC.equals(sourceType) && sourceName != null && sourceName.toLowerCase(java.util.Locale.ROOT).startsWith("clue scroll"));
+    }
+    /** one picture of the clue reward window, once it has drawn */
+    static final long[] CLUE_SHOT_DELAYS_MS = {600};
+    /** A reward chest's loot window: once as it opens and again a little later (sent as "1 of 2" and "2 of 2"). */
+    private static final long[] CHEST_SHOT_DELAYS_MS = {300, 1800};
     /** minimum time between "Send screenshot" proofs */
     private static final long SCREENSHOT_COOLDOWN_MS = 5000;
     private volatile long lastProofShotAt;
 
-    private void requestDropFrame(String eventId)
+    private void requestDropFrame(String eventId, int index)
     {
-        if (!running) { shotsInProgress.remove(eventId); return; }
+        String key = eventId + "#" + index;
+        if (!running || !screenshots.containsKey(eventId)) { shotsInProgress.remove(key); return; }
         drawManager.requestNextFrameListener(image -> {
             if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen())
             {
-                shotsInProgress.remove(eventId);
+                shotsInProgress.remove(key);
                 return;
             }
             // the player's name, read on the client thread as the frame is captured
@@ -1447,18 +1693,11 @@ public class ForgeBingoPlugin extends Plugin
                 // stored unstamped; each team's copy is stamped with its own code and tiles when it is sent
                 byte[] shot = ScreenshotEncode.jpeg(img, ApiClient.MAX_SCREENSHOT_BYTES);
                 if (shot == null) return;
-                long now = System.currentTimeMillis();
-                screenshots.values().removeIf(s -> now - s.at > SCREENSHOT_TTL_MILLIS);
-                // full: drop the oldest instead of skipping this one (the newest drop is the likeliest to count)
-                while (screenshots.size() >= MAX_SCREENSHOTS)
-                {
-                    String oldest = null;
-                    long at = Long.MAX_VALUE;
-                    for (Map.Entry<String, Screenshot> s : screenshots.entrySet()) if (s.getValue().at < at) { at = s.getValue().at; oldest = s.getKey(); }
-                    if (oldest == null) break;
-                    screenshots.remove(oldest);
-                }
-                screenshots.put(eventId, new Screenshot(shot, now, player, taken));
+                Screenshot s = screenshots.get(eventId);
+                if (s == null) return; // the server already said this drop does not count
+                s.player = player;
+                s.taken[index] = taken;
+                s.raw[index] = shot;
             }
             catch (Exception ex)
             {
@@ -1466,7 +1705,7 @@ public class ForgeBingoPlugin extends Plugin
             }
             finally
             {
-                shotsInProgress.remove(eventId);
+                shotsInProgress.remove(key);
             }
         });
         });
@@ -1504,13 +1743,21 @@ public class ForgeBingoPlugin extends Plugin
             notice("Connect the plugin to your team first.", true);
             return;
         }
-        if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen())
+        // the bank PIN is checked below, on the client thread, as the frame is captured (this runs on the UI thread)
+        if (client.getGameState() != GameState.LOGGED_IN)
         {
-            notice("Log in (and close the bank PIN) to take a screenshot.", true);
+            notice("Log in to take a screenshot.", true);
             return;
         }
         lastProofShotAt = System.currentTimeMillis();
         drawManager.requestNextFrameListener(image -> {
+            // checked again as the frame is captured: a logout or the bank PIN may have come up since the click
+            if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen())
+            {
+                lastProofShotAt = 0;
+                notice("Close the bank PIN to take a screenshot.", true);
+                return;
+            }
             // read the player's name here, on the client thread, as the frame is captured
             String player = client.getLocalPlayer() == null ? null : client.getLocalPlayer().getName();
             executor.execute(() -> {
@@ -1627,20 +1874,24 @@ public class ForgeBingoPlugin extends Plugin
      */
     private void maybeUploadScreenshot(GameEvent event, ApiModels.EventResult result, int attempt)
     {
-        if (!config.screenshotOnMatch() || result == null || !result.isMatched() || result.duplicate)
+        if (result == null || !result.isMatched() || result.duplicate)
         {
             screenshots.remove(event.id);
             return;
         }
-        Screenshot s = screenshots.remove(event.id);
-        if (s == null)
+        boolean pending = false;
+        for (String key : shotsInProgress) if (key.startsWith(event.id + "#")) { pending = true; break; }
+        if (pending && attempt < 24 && running)
         {
-            if (shotsInProgress.contains(event.id) && attempt < 20 && running)
-            {
-                executor.schedule(() -> maybeUploadScreenshot(event, result, attempt + 1), 250, TimeUnit.MILLISECONDS);
-            }
+            executor.schedule(() -> maybeUploadScreenshot(event, result, attempt + 1), 250, TimeUnit.MILLISECONDS);
             return;
         }
+        Screenshot s = screenshots.remove(event.id);
+        if (s == null) return;
+        // the frames that were really taken (a frame is skipped when the bank PIN is up or the game logged out)
+        List<Integer> shots = new ArrayList<>();
+        for (int i = 0; i < s.raw.length; i++) if (s.raw[i] != null && s.taken[i] != null) shots.add(i);
+        if (shots.isEmpty()) return;
         // One upload per team, attached to that team's submissions from matched[].submissionId.
         Map<String, List<String>> byTeam = new java.util.LinkedHashMap<>();
         // the file is named after the (first) task this drop counted for, e.g. big-boners_3f2a9c1e.png
@@ -1670,13 +1921,14 @@ public class ForgeBingoPlugin extends Plugin
         {
             if (m.teamId != null && m.tileId != null) tilesByTeam.computeIfAbsent(m.teamId, k -> new ArrayList<>()).add(m.tileId);
         }
-        String capturedAt = s.taken.withZoneSameInstant(java.time.ZoneOffset.UTC).toInstant().toString();
         for (Map.Entry<String, List<String>> t : byTeam.entrySet())
         {
             try
             {
                 // that team's own board: its bingo's code word and the names of the tiles the drop counted for
-                ApiResult<ApiModels.BoardResponse> br = api.board(t.getKey());
+                ApiClient a = api;
+                if (a == null) return; // the plugin was switched off meanwhile
+                ApiResult<ApiModels.BoardResponse> br = a.board(t.getKey());
                 ApiModels.BoardResponse tb = br.ok() ? br.body : null;
                 String kw = tb != null && tb.event != null ? tb.event.keyword : null;
                 List<String> names = new ArrayList<>();
@@ -1688,10 +1940,30 @@ public class ForgeBingoPlugin extends Plugin
                     if (title != null && !title.isEmpty() && !names.contains(title)) names.add(title);
                 }
                 String tiles = names.isEmpty() ? null : names.size() <= 2 ? String.join(", ", names) : names.get(0) + ", " + names.get(1) + " +" + (names.size() - 2);
-                BufferedImage img = ImageIO.read(new java.io.ByteArrayInputStream(s.raw));
-                if (img == null) continue;
-                byte[] stamped = ScreenshotEncode.jpeg(ScreenshotStamp.stamp(img, kw, s.taken, s.player, tiles), ApiClient.MAX_SCREENSHOT_BYTES);
-                if (stamped == null) continue;
+                // Several frames of one drop go up as ONE picture, stacked top to bottom in the order taken
+                // (owner, 2026-11-14). Each frame keeps its own stamp: its time and which it is ("1 of 2").
+                List<BufferedImage> frames = new ArrayList<>();
+                java.time.ZonedDateTime first = null;
+                for (int n = 0; n < shots.size(); n++)
+                {
+                    int i = shots.get(n);
+                    String part = shots.size() > 1 ? (n + 1) + " of " + shots.size() : null;
+                    String stampTile = part == null ? tiles : tiles == null ? part : tiles + " (" + part + ")";
+                    BufferedImage img = ImageIO.read(new java.io.ByteArrayInputStream(s.raw[i]));
+                    if (img == null) continue;
+                    frames.add(ScreenshotStamp.stamp(img, kw, s.taken[i], s.player, stampTile));
+                    if (first == null) first = s.taken[i];
+                }
+                BufferedImage stacked = ScreenshotStack.vertical(frames);
+                if (stacked == null) continue;
+                byte[] stamped = ScreenshotEncode.jpeg(stacked, ApiClient.MAX_SCREENSHOT_BYTES);
+                if (stamped == null || stamped.length > ApiClient.MAX_SCREENSHOT_BYTES)
+                {
+                    // too big even at low quality: send the first frame alone rather than nothing
+                    stamped = ScreenshotEncode.jpeg(frames.get(0), ApiClient.MAX_SCREENSHOT_BYTES);
+                    if (stamped == null) continue;
+                }
+                String capturedAt = first.withZoneSameInstant(java.time.ZoneOffset.UTC).toInstant().toString();
                 ApiResult<ApiModels.ProofResponse> r = api.uploadProof(t.getKey(), stamped, t.getValue(), kw, capturedAt, labels.get(t.getKey()));
                 if (!r.ok())
                 {
@@ -1737,6 +2009,26 @@ public class ForgeBingoPlugin extends Plugin
                 return;
             }
             automationNoticeShown = false;
+            // the pictures of a raid's chest also go to the tiles its completion just counted for
+            ApiModels.EventResult proofFor = result;
+            if (result != null && !result.duplicate && GameEvent.RAID_CHEST.equals(event.sourceType) && raidWithChest(event.sourceName))
+            {
+                ApiModels.EventResult kc = freshRaidKc();
+                if (kc != null && kc.matched != null)
+                {
+                    ApiModels.EventResult both = new ApiModels.EventResult();
+                    both.eventId = result.eventId;
+                    both.matched = new ArrayList<>();
+                    if (result.matched != null) both.matched.addAll(result.matched);
+                    both.matched.addAll(kc.matched);
+                    proofFor = both;
+                }
+            }
+            if (result != null && result.isMatched() && !result.duplicate && GameEvent.KC.equals(event.sourceType) && raidWithChest(event.sourceName))
+            {
+                raidKcResult = result;
+                raidKcAt = System.currentTimeMillis();
+            }
             if (result != null && result.isMatched() && !result.duplicate)
             {
                 // tiles that were already finished before this drop: it still counts, but no second celebration
@@ -1797,13 +2089,18 @@ public class ForgeBingoPlugin extends Plugin
                         notice("Counted: " + tileName + progress + state, config.chatNotices());
                     }
                 }
-                maybeUploadScreenshot(event, result);
+                maybeUploadScreenshot(event, proofFor);
                 for (String tileId : tileNowDone)
                 {
                     if (!wasDone.contains(tileId)) celebrateTile(config.activeBoardId(), tileId, tileTitles.get(tileId));
                 }
                 boardVersions.clear();
                 executor.execute(ForgeBingoPlugin.this::pollBoardSafely);
+            }
+            else if (proofFor != result)
+            {
+                // the chest's own loot counted for nothing, but the raid did: its pictures are that raid's proof
+                maybeUploadScreenshot(event, proofFor);
             }
             else
             {

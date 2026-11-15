@@ -54,6 +54,32 @@ public class ItemSlotsTest
     }
 
     @Test
+    public void eachItemCanNeedItsOwnAmount()
+    {
+        ApiModels.Task k = new ApiModels.Task();
+        k.eachItem = true;
+        k.itemIds = Arrays.asList(1, 2, 3, 4);
+        k.itemGroups = Arrays.asList(Arrays.asList(2, 3));
+        k.requiredQty = 16;
+        k.itemQtys = new HashMap<>();
+        k.itemQtys.put("1", 5);
+        k.itemQtys.put("2", 10);
+        k.itemQtys.put("3", 10);
+        k.itemQtys.put("4", 1);
+        k.itemProgress = new HashMap<>();
+        k.itemProgress.put("i1", p(7, 0));
+        k.itemProgress.put("g0", p(4, 2));
+        List<ItemSlots.Slot> s = ItemSlots.of(k);
+        assertEquals(5, s.get(0).need);
+        assertEquals(5, s.get(0).approved); // capped at its own amount
+        assertTrue(s.get(0).done());
+        assertEquals(10, s.get(1).need);
+        assertEquals(4, s.get(1).approved);
+        assertEquals(2, s.get(1).pending);
+        assertEquals(1, s.get(2).need);
+    }
+
+    @Test
     public void ordinaryTasksHaveNoSubTasks()
     {
         ApiModels.Task k = new ApiModels.Task();
