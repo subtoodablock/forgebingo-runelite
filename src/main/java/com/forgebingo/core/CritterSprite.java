@@ -13,6 +13,8 @@ public final class CritterSprite
     public static BufferedImage image(Critter c, int variant, int frame)
     {
         BufferedImage img = null;
+        // Chexy is drawn live by Chexy; this is just a still of it
+        if (c == Critter.CHEXY) return Chexy.still();
         if (c != null && c != Critter.IMP)
         {
             int v = Math.floorMod(variant, c.variants);

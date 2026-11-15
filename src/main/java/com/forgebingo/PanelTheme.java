@@ -104,6 +104,11 @@ public enum PanelTheme
     /** how long a visitor stays before the regular comes back (seconds, from and to) */
     static final float VISIT_MIN = 60f;
     static final float VISIT_MAX = 90f;
+    /**
+     * The odds that a visitor, in any theme, is Chexy (the rainbow orbit) instead of the theme's own. Super rare
+     * (owner, 2026-11-14): a visitor comes about every 10 minutes, so Chexy shows up roughly once in 5-6 hours.
+     */
+    static final float CHEXY_CHANCE = 0.03f;
 
     @Override
     public String toString()

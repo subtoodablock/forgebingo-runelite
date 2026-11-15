@@ -3,6 +3,7 @@ package com.forgebingo;
 import com.forgebingo.core.Critter;
 import com.forgebingo.core.CritterSprite;
 import com.forgebingo.core.ImpSprite;
+import com.forgebingo.core.Chexy;
 import com.forgebingo.core.Pet;
 import com.forgebingo.core.PetSprites;
 import java.awt.AWTEvent;
@@ -81,6 +82,8 @@ final class PanelImps extends LayerUI<JComponent>
         float pop;
         boolean nextGuest;
         float sparkX, sparkY;
+        /** Chexy's own clock (its rings and comets), slowed for Calm */
+        float wisp;
         Rectangle last;
     }
 
@@ -124,7 +127,11 @@ final class PanelImps extends LayerUI<JComponent>
     float rollT = PanelTheme.ROLL_SECONDS;
     /** the odds a roll brings a visitor; below 0 = the usual PanelTheme.ROLL_CHANCE (the previews set 1) */
     float rollChance = -1f;
+    /** the odds a visitor is Chexy (the previews set 1) */
+    float chexyChance = PanelTheme.CHEXY_CHANCE;
     private static final float POP_TIME = 0.45f;
+    /** Calm: Chexy turns slower and sparkles less */
+    private boolean calm;
 
     private boolean fxOn()
     {
@@ -258,6 +265,7 @@ final class PanelImps extends LayerUI<JComponent>
     /** Calm draws at half speed (about 15 frames a second); Full at about 30. */
     void setCalm(boolean calm)
     {
+        this.calm = calm;
         timer.setDelay(calm ? 66 : 33);
     }
 
@@ -385,6 +393,14 @@ final class PanelImps extends LayerUI<JComponent>
         m.rare = false;
         Critter[] cast = theme.cast;
         Critter pick = cast[0];
+        if (visitor && rnd.nextFloat() < chexyChance)
+        {
+            // Chexy can visit any theme
+            m.kind = Critter.CHEXY;
+            m.variant = 0;
+            m.wisp = rnd(0, 20);
+            return true;
+        }
         if (visitor && theme == PanelTheme.BARROWS)
         {
             // the six brothers take turns: one that is not out right now
@@ -488,7 +504,8 @@ final class PanelImps extends LayerUI<JComponent>
                 boolean came = dress(m, m.nextGuest);
                 if (!came) dress(m, false);
                 // Barrows brothers just take turns; everywhere else the visitor leaves again
-                m.guest = came && m.nextGuest && theme != PanelTheme.BARROWS;
+                // (Chexy is a visitor there too, and leaves again)
+                m.guest = came && m.nextGuest && (theme != PanelTheme.BARROWS || m.kind == Critter.CHEXY);
                 m.guestT = m.guest ? rnd(PanelTheme.VISIT_MIN, PanelTheme.VISIT_MAX) : 0;
                 m.life = Math.max(m.life, PanelTheme.VISIT_MAX + 30f);
                 m.popDir = 1;
@@ -627,6 +644,22 @@ final class PanelImps extends LayerUI<JComponent>
         float dx = m.tx - m.x;
         float dy = m.ty - m.y;
         float d = (float) Math.max(1.0, Math.sqrt(dx * dx + dy * dy));
+        if (m.kind == Critter.CHEXY)
+        {
+            // the wisp glides: it eases into speed and out again, and swings through gentle curves on the way
+            m.wisp += dt * (calm ? 0.55f : 1f);
+            float speed = 40f * Math.min(1f, d / 46f) + 6f;
+            float swirl = (float) Math.sin(m.wisp * 0.9f) * 0.55f;
+            float wx = dx / d * (float) Math.cos(swirl) - dy / d * (float) Math.sin(swirl);
+            float wy = dx / d * (float) Math.sin(swirl) + dy / d * (float) Math.cos(swirl);
+            m.vx += (wx * speed - m.vx) * Math.min(1, dt * 1.1f);
+            m.vy += (wy * speed - m.vy) * Math.min(1, dt * 1.1f);
+            m.x += m.vx * dt;
+            m.y += m.vy * dt;
+            // stays clear of the side edges (and the scroll bar), its glow included
+            m.x = Math.max(28, Math.min(vw - 30, m.x));
+            return;
+        }
         float speed = d < 20 ? 14f : 46f;
         m.vx += (dx / d * speed - m.vx) * Math.min(1, dt * 1.6f);
         m.vy += (dy / d * speed - m.vy) * Math.min(1, dt * 1.6f);
@@ -1156,6 +1189,17 @@ final class PanelImps extends LayerUI<JComponent>
             float sc = m.popDir == -1 ? 1 - k * k : (float) (1 + 0.25 * Math.sin(k * Math.PI)) * Math.min(1f, k * 1.6f);
             g.translate(0, -12 * (1 - sc));
             g.scale(Math.max(0.02f, sc), Math.max(0.02f, sc));
+        }
+        if (m.kind == Critter.CHEXY)
+        {
+            // drawn live, centred where a creature's body would be: a slow float and bob on top of its flight,
+            // leaning a touch into the way it is going
+            float w = m.wisp;
+            g.translate(Chexy.bobX(w), -20 + Chexy.bobY(w));
+            g.rotate(Math.max(-0.25f, Math.min(0.25f, m.vx * 0.006f)));
+            Chexy.paint(g, 0, 0, w, Chexy.SIZE, calm);
+            g.setTransform(old);
+            return;
         }
         if (m.mode == Mode.CLIMB)
         {

@@ -18,7 +18,9 @@ public enum Critter
     // Inferno
     ZUK(1), JAD(1), MELEER(1), NIBBLER(1),
     // Skilling: any of the game's pets (see Pet); which one is kept beside it, not as a variant
-    PET(1);
+    PET(1),
+    // Chexy: a glowing rainbow atom, a rare visitor in every theme (drawn by Chexy, not a pixel grid)
+    CHEXY(1);
 
     public final int variants;
 
@@ -30,7 +32,7 @@ public enum Critter
     /** These never land: they fly around the panel instead of walking along the cards. */
     public boolean flies()
     {
-        return this == XARPUS || this == VESPULA;
+        return this == XARPUS || this == VESPULA || this == CHEXY;
     }
 
     /** Small things that fall down the panel between the famous items. */
