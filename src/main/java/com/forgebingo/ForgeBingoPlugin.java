@@ -1594,7 +1594,7 @@ public class ForgeBingoPlugin extends Plugin
         // a raid chest is photographed when its loot could count, or when the raid itself just counted for a tile
         if (maybeScreenshot && (couldCount(ev) || (chestWindow && raidWithChest(ev.sourceName) && freshRaidKc() != null)))
         {
-            captureScreenshot(ev.id, shotDelays(ev.sourceType, chestWindow), chestWindow);
+            captureScreenshot(ev.id, shotDelays(ev.sourceType, ev.sourceName, chestWindow), chestWindow);
         }
         List<QueuedEvent> evicted = queue.add(new QueuedEvent(ev, System.currentTimeMillis()));
         for (QueuedEvent q : evicted) notice("Queue full, dropped oldest event: " + q.event.label(), true);
@@ -1708,10 +1708,21 @@ public class ForgeBingoPlugin extends Plugin
      * Kill-count tiles get both pictures too (owner, 2026-11-14: storage is fine, take two until we know the best
      * moment for every boss). They go up stacked as one image, see ScreenshotStack.
      */
-    static long[] shotDelays(String sourceType, boolean chestWindow)
+    static long[] shotDelays(String sourceType, String sourceName, boolean chestWindow)
     {
+        // clues need one picture only (owner, 2026-11-14): the reward window as the casket opens
+        if (isClue(sourceType, sourceName)) return CLUE_SHOT_DELAYS_MS;
         return chestWindow ? CHEST_SHOT_DELAYS_MS : DROP_SHOT_DELAYS_MS;
     }
+
+    /** a clue casket's loot, or the "You have completed N ... Treasure Trails" count that comes with it */
+    static boolean isClue(String sourceType, String sourceName)
+    {
+        return GameEvent.CLUE.equals(sourceType)
+            || (GameEvent.KC.equals(sourceType) && sourceName != null && sourceName.toLowerCase(java.util.Locale.ROOT).startsWith("clue scroll"));
+    }
+    /** one picture of the clue reward window, once it has drawn */
+    static final long[] CLUE_SHOT_DELAYS_MS = {600};
     /** A reward chest's loot window: once as it opens and again a little later (sent as "1 of 2" and "2 of 2"). */
     private static final long[] CHEST_SHOT_DELAYS_MS = {300, 1800};
     /** minimum time between "Send screenshot" proofs */
