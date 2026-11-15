@@ -374,6 +374,8 @@ public class ForgeBingoPlugin extends Plugin
                 });
                 helloPending = true;
                 helloNotBefore = 0;
+                helloEvents = null; // the hello this triggers asks for the board again (it can put the player on a team)
+                boardFailures = 0;  // a fresh key or Refresh never waits out the back-off of earlier failures
                 catalogueTriedAt = 0;
                 loadCatalogue();
                 pollBoardSafely();
@@ -493,7 +495,10 @@ public class ForgeBingoPlugin extends Plugin
             // away when the server reports a bingo we did not know about, so the new board shows without a wait.
             java.util.Set<String> now = new java.util.HashSet<>();
             if (r.body.memberships != null) for (ApiModels.Membership m : r.body.memberships) if (m != null && m.eventId != null) now.add(m.eventId);
-            boolean newBingo = helloEvents != null && !helloEvents.containsAll(now);
+            // The first hello after connecting (a key just pasted, Refresh, a login) can itself put the player on a team,
+            // and the board was asked for a moment before it: ask again now instead of waiting (owner, 2026-11-14).
+            boolean firstHello = helloEvents == null;
+            boolean newBingo = !now.isEmpty() && (firstHello || !helloEvents.containsAll(now));
             helloEvents = now;
             // bingos whose board hasn't opened yet: the side panel counts down to their start
             List<ApiModels.Membership> waiting = new ArrayList<>();
@@ -501,7 +506,9 @@ public class ForgeBingoPlugin extends Plugin
             notifyPanel(p -> p.setUpcoming(waiting));
             if (newBingo)
             {
-                notice("You were added to a new bingo board.", false);
+                if (!firstHello) notice("You were added to a new bingo board.", false);
+                boardVersions.clear();
+                boardFailures = 0;
                 pollBoardSafely();
             }
             for (ConnectionStatus.Line l : lines)
