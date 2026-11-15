@@ -107,6 +107,8 @@ public class ForgeBingoPlugin extends Plugin
     private static final int MAX_SCREENSHOTS = 8;
     /** gameval InventoryID.INV (the backpack). */
     private static final int INVENTORY_CONTAINER_ID = 93;
+    /** worn equipment (InventoryID.WORN) */
+    private static final int WORN_CONTAINER_ID = 94;
     private static final long CATALOGUE_REFRESH_MILLIS = 6 * 60 * 60_000L;
     private static final long CATALOGUE_RETRY_MILLIS = 5 * 60_000L;
     private static final int MAX_BOARD_ITEM_NAMES = 2_000;
@@ -1254,6 +1256,13 @@ public class ForgeBingoPlugin extends Plugin
         {
             Map<Integer, Integer> after = containerCounts(c);
             Map<Integer, Integer> was = lastContainers.put(e.getContainerId(), after);
+            if (e.getContainerId() == WORN_CONTAINER_ID && !after.equals(was))
+            {
+                // Worn gear changed (equip, unequip, swap): whatever reaches the backpack now came off the player, even
+                // when the worn item has another id than its backpack form (an Elemental amulet taken off counted as a
+                // Fractured Archive reward, owner 2026-11-14).
+                activityWatcher.onWornChanged(client.getTickCount());
+            }
             if (was != null && e.getContainerId() == net.runelite.api.gameval.InventoryID.SEED_BOX)
             {
                 // An open seed box takes pickpocketed seeds straight in, so RuneLite's loot tracker never reports
