@@ -1697,23 +1697,20 @@ public class ForgeBingoPlugin extends Plugin
     }
 
     /**
-     * Milliseconds between spotting a drop and taking its screenshots. The first is the moment the loot lands
-     * (owner, 2026-11-14): the loot notice and the "kill count" chat line arrive in the same game tick as the loot
-     * (measured on live Zulrah, Giant Mole, Vorkath and clue events: 5-34 ms apart), so the frame a moment later
-     * shows it on the ground before the player can pick it up. The second, ~2.5 ticks on, catches the drop's chat
-     * message and the collection log pop-up (sent as "1 of 2" and "2 of 2").
-     */
-    private static final long[] DROP_SHOT_DELAYS_MS = {300, 1500};
-    /**
-     * Kill-count tiles get both pictures too (owner, 2026-11-14: storage is fine, take two until we know the best
-     * moment for every boss). They go up stacked as one image, see ScreenshotStack.
+     * Milliseconds between spotting a drop or kill and taking its screenshot(s). The loot notice and the "kill count"
+     * chat line arrive in the same game tick as the loot (measured on live Zulrah, Giant Mole, Vorkath and clue
+     * events: 5-34 ms apart), so a picture a moment later shows the loot on the ground and the chat line. A reward
+     * chest's two pictures go up stacked as one image, see ScreenshotStack.
      */
     static long[] shotDelays(String sourceType, String sourceName, boolean chestWindow)
     {
-        // clues need one picture only (owner, 2026-11-14): the reward window as the casket opens
+        // Two pictures only for reward chests (raids, Barrows, Moons); clues, boss drops and kill counts get one
+        // (owner, 2026-11-14).
         if (isClue(sourceType, sourceName)) return CLUE_SHOT_DELAYS_MS;
-        return chestWindow ? CHEST_SHOT_DELAYS_MS : DROP_SHOT_DELAYS_MS;
+        return chestWindow ? CHEST_SHOT_DELAYS_MS : SINGLE_SHOT_DELAYS_MS;
     }
+    /** one picture of a drop or kill: a tick on, so the loot is drawn on the ground before it can be picked up */
+    static final long[] SINGLE_SHOT_DELAYS_MS = {600};
 
     /** a clue casket's loot, or the "You have completed N ... Treasure Trails" count that comes with it */
     static boolean isClue(String sourceType, String sourceName)
