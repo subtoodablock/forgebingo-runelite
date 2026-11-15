@@ -84,6 +84,8 @@ final class PanelImps extends LayerUI<JComponent>
         float sparkX, sparkY;
         /** Chexy's own clock (its rings and comets), slowed for Calm */
         float wisp;
+        /** seconds since Chexy's visit began (it powers up as the visit goes on: Chexy.form) */
+        float visitAge;
         Rectangle last;
     }
 
@@ -399,6 +401,7 @@ final class PanelImps extends LayerUI<JComponent>
             m.kind = Critter.CHEXY;
             m.variant = 0;
             m.wisp = rnd(0, 20);
+            m.visitAge = 0;
             return true;
         }
         if (visitor && theme == PanelTheme.BARROWS)
@@ -647,8 +650,10 @@ final class PanelImps extends LayerUI<JComponent>
         if (m.kind == Critter.CHEXY)
         {
             // the wisp glides: it eases into speed and out again, and swings through gentle curves on the way
-            m.wisp += dt * (calm ? 0.55f : 1f);
-            float speed = 40f * Math.min(1f, d / 46f) + 6f;
+            // its rings spin up while it powers up (Chexy.spin); it all but stops to gather itself while it charges
+            m.visitAge += dt;
+            m.wisp += dt * (calm ? 0.55f : 1f) * Chexy.spin(m.visitAge);
+            float speed = (40f * Math.min(1f, d / 46f) + 6f) * (Chexy.charge(m.visitAge) > 0 ? 0.25f : 1f);
             float swirl = (float) Math.sin(m.wisp * 0.9f) * 0.55f;
             float wx = dx / d * (float) Math.cos(swirl) - dy / d * (float) Math.sin(swirl);
             float wy = dx / d * (float) Math.sin(swirl) + dy / d * (float) Math.cos(swirl);
@@ -656,8 +661,9 @@ final class PanelImps extends LayerUI<JComponent>
             m.vy += (wy * speed - m.vy) * Math.min(1, dt * 1.1f);
             m.x += m.vx * dt;
             m.y += m.vy * dt;
-            // stays clear of the side edges (and the scroll bar), its glow included
-            m.x = Math.max(28, Math.min(vw - 30, m.x));
+            // stays clear of the side edges (and the scroll bar), its glow and aura included
+            int edge = Chexy.form(m.visitAge) == Chexy.BASE ? 28 : 34;
+            m.x = Math.max(edge, Math.min(vw - edge - 2, m.x));
             return;
         }
         float speed = d < 20 ? 14f : 46f;
@@ -916,7 +922,9 @@ final class PanelImps extends LayerUI<JComponent>
                     m.sparkY = rnd(-26, -6);
                 }
             }
-            Rectangle r = new Rectangle(Math.round(m.x) - 30, Math.round(m.y) - 50, 60, 58);
+            // Chexy's aura and flash reach further than a creature's box: about 32 px round its centre (20 up)
+            Rectangle r = m.kind == Critter.CHEXY ? new Rectangle(Math.round(m.x) - 40, Math.round(m.y) - 66, 80, 82)
+                : new Rectangle(Math.round(m.x) - 30, Math.round(m.y) - 50, 60, 58);
             layer.repaint(m.last == null ? r : r.union(m.last));
             m.last = r;
         }
@@ -1197,7 +1205,7 @@ final class PanelImps extends LayerUI<JComponent>
             float w = m.wisp;
             g.translate(Chexy.bobX(w), -20 + Chexy.bobY(w));
             g.rotate(Math.max(-0.25f, Math.min(0.25f, m.vx * 0.006f)));
-            Chexy.paint(g, 0, 0, w, Chexy.SIZE, calm);
+            Chexy.paint(g, 0, 0, w, w, Chexy.SIZE, calm, m.visitAge);
             g.setTransform(old);
             return;
         }
