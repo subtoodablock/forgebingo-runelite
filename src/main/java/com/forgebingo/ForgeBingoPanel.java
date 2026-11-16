@@ -852,10 +852,21 @@ class ForgeBingoPanel extends PluginPanel
         }
         int counted = 0;
         int waiting = 0;
+        // a tile that completes with any one of its tasks shows them as Option 1 / OR / Option 2 (owner, 2026-11-15),
+        // each with its own Send screenshot, so every proof lands on the option it is for
+        boolean options = "any".equals(t.completionMode) && t.tasks.size() > 1;
+        int n = 0;
         for (ApiModels.Task k : t.tasks)
         {
             counted += k.approvedQty;
             waiting += k.pendingQty;
+            n++;
+            if (options)
+            {
+                if (n > 1) detail.add(left(cardText("OR", PanelUi.GOLD)));
+                detail.add(left(smallCaps("Option " + n)));
+                detail.add(gap(2));
+            }
             detail.add(taskBox(t, k, secret, opened));
             detail.add(gap(6));
         }
