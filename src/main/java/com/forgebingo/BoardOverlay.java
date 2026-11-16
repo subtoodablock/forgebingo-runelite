@@ -60,14 +60,12 @@ public class BoardOverlay extends Overlay
     static final long POP_MS = 240;
     /** hover highlight fade */
     static final long HOVER_MS = 130;
-    /** the whole opening deal, first tile leaving the deck to the last one landing */
-    static final long DEAL_MS = 3000;
-    /** one tile's flight from the deck to its slot */
-    static final long FLIGHT_MS = 460;
+    /** the whole opening, first tile moving to the last effect fading (OpeningAnim owns the timings) */
+    static final long DEAL_MS = OpeningAnim.DEAL_MS;
     /** the last tile lands by here, leaving room for the rarity effects inside DEAL_MS */
-    static final long LAND_MS = 2550;
-    /** sparkles / glow after a tile lands (Rare and up) */
-    static final long LANDING_FX_MS = 420;
+    static final long LAND_MS = OpeningAnim.LAND_MS;
+    /** sparkles / glow / effect after a tile lands (Uncommon and up) */
+    static final long LANDING_FX_MS = OpeningAnim.LANDING_FX_MS;
     /** the soft flash every tile gives as it settles into its slot */
     static final long SETTLE_MS = 220;
     /** how far back in time a flying tile's motion-blur trail reaches */
@@ -373,6 +371,12 @@ public class BoardOverlay extends Overlay
     private final Line2D.Double line = new Line2D.Double();
     private final Path2D.Double path = new Path2D.Double();
     private final Ellipse2D.Double oval = new Ellipse2D.Double();
+    /** the opening animation's effects (sparkles, lightning, Legendary scenes, the name tag) */
+    private final OpeningFx fx = new OpeningFx();
+    /** scratch poses for a tile in flight, reused every frame */
+    private final double[] poseNow = new double[6];
+    private final double[] poseWas = new double[6];
+    private final double[] poseDraw = new double[6];
 
     private void dropCaches()
     {
@@ -762,8 +766,10 @@ public class BoardOverlay extends Overlay
         Rectangle b = l.board();
         int sm = shadowMargin();
         g.drawImage(backdrop(l), b.x - sm, b.y - sm, null);
-        boolean legendaryDeal = sinceOpen != Long.MAX_VALUE && opening.rarity == OpeningAnim.Rarity.LEGENDARY;
-        if (legendaryDeal) drawVortex(g, b, sinceOpen, boardAlpha);
+        fx.s = s;
+        fx.u = u;
+        // Legendary: the animation's scene behind the tiles (vortex, starfall, runes, ...)
+        if (sinceOpen != Long.MAX_VALUE) fx.scene(g, opening, b, px(14), sinceOpen, boardAlpha);
         g.drawImage(header(board, l), b.x, b.y, null);
         drawCloseButton(g, l.closeButton(), hoverable && hoverClose);
 
@@ -781,16 +787,19 @@ public class BoardOverlay extends Overlay
         int prev = hoverable ? hoverPrev : -1;
         double hoverIn = anim ? BoardLayout.easeOut((now - hoverAt) / (double) HOVER_MS) : 1;
         Composite base = g.getComposite();
-        // Opening animation (owner, 2026-11-12): one of 109, rolled by rarity on every open (OpeningAnim). Tiles
-        // arrive in the animation's order and way; the last one lands by LAND_MS and the rarity effects finish by
-        // DEAL_MS (3 s). Rare: landing sparkles. Epic: + trails and glow flashes. Legendary: + light vortex and burst.
+        // Opening animation (owner, 2026-11-15): one of 100, rolled by rarity on every open (OpeningAnim). Tiles
+        // arrive in the animation's order, path and pace; the last one lands by LAND_MS and the effects finish by
+        // DEAL_MS (3 s). Uncommon: a landing flourish. Epic: + trails, glow and a strong effect. Legendary: + a scene
+        // behind the board and a burst at the end (OpeningFx).
         int n = l.size * l.size;
         boolean dealing = sinceOpen != Long.MAX_VALUE;
         OpeningAnim.Spec spec = opening;
         OpeningAnim.Rarity rarity = spec.rarity;
         int[] ranks = openingRanks;
         if (dealing && (ranks == null || ranks.length != n)) openingRanks = ranks = OpeningAnim.ranks(spec.order, l.size, openingSeed);
-        double stepMs = n > 1 ? (LAND_MS - FLIGHT_MS) / (double) (n - 1) : 0;
+        int maxRank = 0;
+        if (dealing) for (int r : ranks) maxRank = Math.max(maxRank, r);
+        long flightMs = spec.pace.flightMs;
         double deckX = b.getCenterX();
         double deckY = b.y + b.height - l.pad - c / 2.0;
         int undealt = 0;
@@ -803,10 +812,11 @@ public class BoardOverlay extends Overlay
             long sinceLand = Long.MAX_VALUE;
             if (dealing)
             {
-                double dealt = (sinceOpen - ranks[idx] * stepMs) / FLIGHT_MS;
+                double leaves = OpeningAnim.startMs(spec.pace, ranks[idx], maxRank);
+                double dealt = (sinceOpen - leaves) / flightMs;
                 if (dealt <= 0) { undealt++; continue; }
                 if (dealt < 1) { anyFlying = true; continue; }
-                sinceLand = sinceOpen - (long) (ranks[idx] * stepMs + FLIGHT_MS);
+                sinceLand = sinceOpen - (long) (leaves + flightMs);
             }
             if (t == null) continue;
             // landed: an exact copy on the pixel grid
@@ -819,7 +829,7 @@ public class BoardOverlay extends Overlay
             }
             double glow = t == selected ? 1 : idx == hov ? hoverIn : idx == prev ? 1 - hoverIn : 0;
             if (glow > 0.01) drawHighlight(g, x, y, c, glow, t == selected, boardAlpha, base);
-            if (sinceLand < LANDING_FX_MS && rarity != OpeningAnim.Rarity.COMMON) drawLanding(g, x, y, c, idx, sinceLand, rarity, boardAlpha);
+            if (sinceLand < LANDING_FX_MS && rarity != OpeningAnim.Rarity.COMMON) fx.landing(g, spec, b, x, y, c, cellArc(c), idx, sinceLand, boardAlpha);
         }
         if (dealing)
         {
@@ -832,7 +842,7 @@ public class BoardOverlay extends Overlay
                 AffineTransform home = g.getTransform();
                 for (int idx = 0; idx < n; idx++)
                 {
-                    double fp = (sinceOpen - ranks[idx] * stepMs) / FLIGHT_MS;
+                    double fp = (sinceOpen - OpeningAnim.startMs(spec.pace, ranks[idx], maxRank)) / flightMs;
                     if (fp <= 0 || fp >= 1 || tiles[idx] == null) continue;
                     Face f = face(idx, tiles[idx], c, now);
                     double tx = grid.x + idx % l.size * step + c / 2.0;
@@ -841,13 +851,14 @@ public class BoardOverlay extends Overlay
                     {
                         for (int k = 2; k >= 1; k--)
                         {
-                            drawPose(g, home, f, c, m, spec, idx, fp - 0.11 * k, tx, ty, b, deckX, deckY, boardAlpha * (k == 1 ? 0.24f : 0.11f), rarity.colour);
+                            drawPose(g, home, f, c, m, spec, idx, fp - 0.11 * k, tx, ty, b, deckX, deckY, boardAlpha * (k == 1 ? 0.24f : 0.11f), spec.accent(idx));
                         }
                     }
                     // motion blur: a few fainter copies where the tile was a moment ago, stronger the faster it moves
-                    double span = BLUR_MS / (double) FLIGHT_MS;
-                    double[] here = OpeningAnim.pose(spec.entrance, fp, idx, tx, ty, c, b.x, b.y, b.width, b.height, deckX, deckY);
-                    double[] was = OpeningAnim.pose(spec.entrance, fp - span, idx, tx, ty, c, b.x, b.y, b.width, b.height, deckX, deckY);
+                    double span = BLUR_MS / (double) flightMs;
+                    double[] here = poseNow, was = poseWas;
+                    OpeningAnim.pose(here, spec.entrance, fp, idx, tx, ty, c, b.x, b.y, b.width, b.height, deckX, deckY);
+                    OpeningAnim.pose(was, spec.entrance, fp - span, idx, tx, ty, c, b.x, b.y, b.width, b.height, deckX, deckY);
                     double moved = Math.hypot(here[0] - was[0], here[1] - was[1]) + c * 0.5 * Math.abs(here[4] - was[4])
                         + c * 0.5 * Math.max(Math.abs(here[2] - was[2]), Math.abs(here[3] - was[3]));
                     double strength = Math.max(0, Math.min(1, (moved - 1.5) / (c * 0.22)));
@@ -868,7 +879,10 @@ public class BoardOverlay extends Overlay
                 g.setTransform(home);
                 g.setComposite(base);
             }
-            if (rarity == OpeningAnim.Rarity.LEGENDARY) drawBurst(g, b, sinceOpen, boardAlpha);
+            // Legendary: lightning (Tempest) and the burst at the end, over the tiles; then the animation's name tag
+            fx.front(g, spec, b, sinceOpen, boardAlpha);
+            g.setComposite(base);
+            fx.tag(g, spec, b, sinceOpen, boardAlpha, fSmallBold, TEXT, WELL);
             g.setComposite(base);
             if (sinceOpen > DEAL_MS) cascade = false;
         }
@@ -889,7 +903,8 @@ public class BoardOverlay extends Overlay
         double tx, double ty, Rectangle b, double deckX, double deckY, float alpha, Color ghost)
     {
         if (fp <= 0) return;
-        double[] p = OpeningAnim.pose(spec.entrance, fp, idx, tx, ty, c, b.x, b.y, b.width, b.height, deckX, deckY);
+        double[] p = poseDraw;
+        OpeningAnim.pose(p, spec.entrance, fp, idx, tx, ty, c, b.x, b.y, b.width, b.height, deckX, deckY);
         float a = (float) Math.max(0, Math.min(1, alpha * p[5]));
         if (a < 0.004f) return;
         g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, a));
@@ -937,100 +952,6 @@ public class BoardOverlay extends Overlay
         rr.setRoundRect(x + w / 2, y + w / 2, c - w, c - w, Math.max(2, arc - w), Math.max(2, arc - w));
         g.draw(rr);
         g.setComposite(base);
-    }
-
-    /** Rare and up: a few sparkles burst from a tile as it lands; Epic and up also flash a glow in the rarity colour. */
-    private void drawLanding(Graphics2D g, int x, int y, int c, int idx, long sinceLand, OpeningAnim.Rarity rarity, float alpha)
-    {
-        double t = sinceLand / (double) LANDING_FX_MS;
-        double fade = 1 - BoardLayout.easeInOut(t);
-        double out = OpeningAnim.easeOut(t);
-        Color col = rarity.colour;
-        double cx = x + c / 2.0;
-        double cy = y + c / 2.0;
-        if (rarity != OpeningAnim.Rarity.RARE)
-        {
-            double grow = out * c * 0.35;
-            int arc = cellArc(c);
-            g.setStroke(new BasicStroke((float) Math.max(1.5, 2 * s * (1 - 0.5 * t))));
-            g.setColor(new Color(col.getRed(), col.getGreen(), col.getBlue(), (int) (200 * fade * alpha)));
-            rr.setRoundRect(x - grow / 2, y - grow / 2, c + grow, c + grow, arc + grow, arc + grow);
-            g.draw(rr);
-        }
-        int count = rarity == OpeningAnim.Rarity.RARE ? 5 : rarity == OpeningAnim.Rarity.EPIC ? 7 : 10;
-        for (int k = 0; k < count; k++)
-        {
-            long h = OpeningAnim.hash(idx * 31L + k);
-            double ang = (h % 628) / 100.0;
-            double dist = c * (0.35 + 0.5 * out) * (0.7 + (h >>> 10) % 30 / 100.0);
-            double size = Math.max(1.5, c * 0.085 * fade + 1);
-            double sx = cx + Math.cos(ang) * dist;
-            double sy = cy + Math.sin(ang) * dist;
-            Color sc = k % 3 == 0 ? Color.WHITE : rarity == OpeningAnim.Rarity.LEGENDARY ? GOLD : col;
-            g.setColor(new Color(sc.getRed(), sc.getGreen(), sc.getBlue(), (int) (230 * fade * alpha)));
-            // a four-point star with pinched sides
-            double pinch = size * 0.28;
-            path.reset();
-            path.moveTo(sx, sy - size);
-            path.lineTo(sx + pinch, sy - pinch);
-            path.lineTo(sx + size, sy);
-            path.lineTo(sx + pinch, sy + pinch);
-            path.lineTo(sx, sy + size);
-            path.lineTo(sx - pinch, sy + pinch);
-            path.lineTo(sx - size, sy);
-            path.lineTo(sx - pinch, sy - pinch);
-            path.closePath();
-            g.fill(path);
-        }
-    }
-
-    /** Legendary: slow rotating rays of light behind the board while the tiles arrive. */
-    private void drawVortex(Graphics2D g, Rectangle b, long since, float alpha)
-    {
-        double life = BoardLayout.easeInOut(since / 400.0) * BoardLayout.easeInOut((DEAL_MS - since) / 500.0);
-        if (life <= 0) return;
-        Graphics2D gc = (Graphics2D) g.create();
-        try
-        {
-            int in = 2 * u;
-            gc.clip(new RoundRectangle2D.Double(b.x + in, b.y + in, b.width - 2 * in, b.height - 2 * in, px(14), px(14)));
-            double cx = b.getCenterX(), cy = b.getCenterY(), r = Math.hypot(b.width, b.height);
-            gc.translate(cx, cy);
-            gc.rotate(since / 900.0);
-            Arc2D.Double ray = new Arc2D.Double(-r, -r, 2 * r, 2 * r, -6, 12, Arc2D.PIE);
-            gc.setPaint(new GradientPaint(0, 0, new Color(255, 200, 90, (int) (80 * life * alpha)), (float) r * 0.6f, 0, new Color(255, 160, 40, 0)));
-            for (int k = 0; k < 12; k++)
-            {
-                gc.rotate(Math.PI / 6);
-                gc.fill(ray);
-            }
-        }
-        finally
-        {
-            gc.dispose();
-        }
-    }
-
-    /** Legendary: a golden ring and spray of sparks from the middle as the last tiles land. */
-    private void drawBurst(Graphics2D g, Rectangle b, long since, float alpha)
-    {
-        double t = (since - (LAND_MS - 150)) / (double) (DEAL_MS - LAND_MS + 150);
-        if (t <= 0 || t >= 1) return;
-        double cx = b.getCenterX(), cy = b.getCenterY(), reach = Math.max(b.width, b.height) * 0.6 * OpeningAnim.easeOut(t);
-        int a = (int) (230 * (1 - BoardLayout.easeInOut(t)) * alpha);
-        g.setStroke(new BasicStroke((float) Math.max(2, 3 * s * (1 - 0.6 * t))));
-        g.setColor(new Color(255, 214, 102, a));
-        oval.setFrame(cx - reach, cy - reach, reach * 2, reach * 2);
-        g.draw(oval);
-        for (int k = 0; k < 36; k++)
-        {
-            long h = OpeningAnim.hash(9000 + k);
-            double ang = k * Math.PI * 2 / 36 + (h % 100) / 400.0, d = reach * (0.6 + (h >>> 8) % 40 / 100.0);
-            double size = (3 + h % 3) * s * 0.8;
-            g.setColor(k % 4 == 0 ? new Color(255, 255, 255, a) : new Color(255, 184, 63, a));
-            oval.setFrame(cx + Math.cos(ang) * d - size / 2.0, cy + Math.sin(ang) * d - size / 2.0, size, size);
-            g.fill(oval);
-        }
     }
 
     /** The deck the opening deal comes from: a few offset card backs, thinner as fewer tiles are left. */
