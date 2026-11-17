@@ -730,6 +730,20 @@ class ForgeBingoPanel extends PluginPanel
             detail.add(left(smallCaps("Requirements")));
             detail.add(gap(4));
         }
+        // a hidden secret tile has no tasks to show, but it takes proof too (owner, 2026-11-17): one Send screenshot
+        // for the whole tile, waiting for an organizer like any other proof
+        if (secret && !t.completed && t.proofTaskId != null && !t.proofTaskId.isEmpty())
+        {
+            JButton shot = button("Send screenshot", "Takes a screenshot of the game now and sends it as proof for this secret tile");
+            String boardId = lastBoard == null ? null : lastBoard.teamBoardId;
+            String tileName = TileInfo.shownTitle(t);
+            String proofTask = t.proofTaskId;
+            shot.addActionListener(e -> plugin.sendScreenshotProof(boardId, proofTask, tileName, tileName));
+            detail.add(gap(8));
+            detail.add(left(cardText("Think you worked it out? Send a screenshot. An organizer checks it.", MUTED)));
+            detail.add(gap(5));
+            detail.add(fullWidth(shot, 24));
+        }
         int counted = 0;
         int waiting = 0;
         for (ApiModels.Task k : t.tasks)
