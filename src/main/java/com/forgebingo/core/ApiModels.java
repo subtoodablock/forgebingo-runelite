@@ -167,6 +167,8 @@ public final class ApiModels
         public String completionMode;
         /** a hidden secret tile (null from older servers: see TileInfo.isSecret) */
         public Boolean secret;
+        /** a hidden secret tile: the id "Send screenshot" proof goes to (null from older servers: no button) */
+        public String proofTaskId;
         public boolean completed;
         public String completedAt;
         public List<Task> tasks;
