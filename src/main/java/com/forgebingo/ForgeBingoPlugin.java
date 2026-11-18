@@ -1121,6 +1121,8 @@ public class ForgeBingoPlugin extends Plugin
         String type = e.getType() == null ? "" : e.getType().name();
         String msg = e.getMessage();
         int tick = client.getTickCount();
+        // "Accepted trade." is written by the game when a player trade goes through: what arrives now was traded
+        if (type.equals("TRADE")) activityWatcher.onTrade(tick);
         // only lines the game itself writes: a player typing the same words in chat must not set this off
         if (type.equals("GAMEMESSAGE") || type.equals("FRIENDSCHATNOTIFICATION") || type.equals("SPAM")) watchSpecialLoot(msg, tick);
         if (type.equals("CLAN_MESSAGE") || type.equals("CLAN_GIM_MESSAGE") || type.equals("FRIENDSCHATNOTIFICATION"))
@@ -1377,6 +1379,12 @@ public class ForgeBingoPlugin extends Plugin
     @Subscribe
     public void onWidgetLoaded(net.runelite.api.events.WidgetLoaded e)
     {
+        if (isTradeWindow(e.getGroupId()))
+        {
+            openTradeWindows.add(e.getGroupId());
+            activityWatcher.onTrade(client.getTickCount());
+            return;
+        }
         if (e.getGroupId() != net.runelite.api.gameval.InterfaceID.TFA_CHESTS) return;
         ItemContainer c = client.getItemContainer(net.runelite.api.gameval.InventoryID.TFA_CHESTS);
         if (c == null) return;
@@ -1400,9 +1408,29 @@ public class ForgeBingoPlugin extends Plugin
         submit(ev, true, true);
     }
 
+    /**
+     * The two player-trade windows (offer and confirm). Items another player hands over are never a drop
+     * (owner, 2026-11-17), so backpack gains while one is open, or just after it closes, are not reported.
+     */
+    private final java.util.Set<Integer> openTradeWindows = new java.util.HashSet<>();
+
+    private static boolean isTradeWindow(int groupId)
+    {
+        return groupId == net.runelite.api.gameval.InterfaceID.TRADEMAIN || groupId == net.runelite.api.gameval.InterfaceID.TRADECONFIRM;
+    }
+
+    @Subscribe
+    public void onWidgetClosed(net.runelite.api.events.WidgetClosed e)
+    {
+        if (!isTradeWindow(e.getGroupId())) return;
+        openTradeWindows.remove(e.getGroupId());
+        activityWatcher.onTrade(client.getTickCount());
+    }
+
     @Subscribe
     public void onGameStateChanged(GameStateChanged e)
     {
+        if (e.getGameState() == GameState.LOGIN_SCREEN || e.getGameState() == GameState.HOPPING) openTradeWindows.clear();
         if (e.getGameState() == GameState.LOGIN_SCREEN || e.getGameState() == GameState.HOPPING) archiveChests.reset();
         // logging out or hopping closes the board (map LOADING does not; the input ignores clicks until LOGGED_IN)
         if (e.getGameState() == GameState.LOGIN_SCREEN || e.getGameState() == GameState.HOPPING || e.getGameState() == GameState.CONNECTION_LOST) boardOverlay.close();
@@ -1444,6 +1472,7 @@ public class ForgeBingoPlugin extends Plugin
             }
         }
         petDetector.onTick(tick).ifPresent(this::reportPet);
+        if (!openTradeWindows.isEmpty()) activityWatcher.onTrade(tick);
         // one event (and one screenshot) per activity per tick: a chest or shop trip with several uniques counts each
         Map<String, GameEvent> byActivity = new java.util.LinkedHashMap<>();
         for (ActivityWatcher.Drop d : activityWatcher.flush(tick, inPvp()))
