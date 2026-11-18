@@ -1030,12 +1030,18 @@ public class ForgeBingoPlugin extends Plugin
         ev.npcName = npc.getName();
         // only what the monster itself dropped: not an item the player just dropped there, nor another player's item
         int tick = client.getTickCount();
+        net.runelite.api.coords.WorldPoint at = npc.getWorldLocation();
+        int size = npc.getComposition() == null ? 1 : npc.getComposition().getSize();
         List<ItemStack> own = new ArrayList<>();
         if (e.getItems() != null)
         {
             for (ItemStack s : e.getItems())
             {
-                if (groundGuard.fromMonster(itemManager.canonicalize(s.getId()), tick)) own.add(s);
+                int id = itemManager.canonicalize(s.getId());
+                boolean keep = at == null
+                    ? groundGuard.fromMonster(id, tick, Integer.MIN_VALUE / 2, Integer.MIN_VALUE / 2, -1, 1)
+                    : groundGuard.fromMonster(id, tick, at.getX(), at.getY(), at.getPlane(), size);
+                if (keep) own.add(s);
             }
         }
         addItems(ev, own);
@@ -1059,9 +1065,10 @@ public class ForgeBingoPlugin extends Plugin
     public void onItemSpawned(net.runelite.api.events.ItemSpawned e)
     {
         TileItem item = e.getItem();
-        if (item != null && item.getOwnership() == TileItem.OWNERSHIP_OTHER)
+        if (item != null && e.getTile() != null && item.getOwnership() == TileItem.OWNERSHIP_OTHER)
         {
-            groundGuard.onForeignItem(itemManager.canonicalize(item.getId()), client.getTickCount());
+            net.runelite.api.coords.WorldPoint w = e.getTile().getWorldLocation();
+            groundGuard.onForeignItem(itemManager.canonicalize(item.getId()), client.getTickCount(), w.getX(), w.getY(), w.getPlane());
         }
     }
 
