@@ -962,8 +962,41 @@ public class ForgeBingoPlugin extends Plugin
         ev.npcId = npc.getId();
         ev.npcIndex = npc.getIndex();
         ev.npcName = npc.getName();
-        addItems(ev, e.getItems());
+        // only what the monster itself dropped: not an item the player just dropped there, nor another player's item
+        int tick = client.getTickCount();
+        List<ItemStack> own = new ArrayList<>();
+        if (e.getItems() != null)
+        {
+            for (ItemStack s : e.getItems())
+            {
+                if (groundGuard.fromMonster(itemManager.canonicalize(s.getId()), tick)) own.add(s);
+            }
+        }
+        addItems(ev, own);
         submit(ev, true);
+    }
+
+    private final com.forgebingo.core.GroundGuard groundGuard = new com.forgebingo.core.GroundGuard();
+
+    /** "Drop" on a backpack item: that item lying on the ground next is the player's own, not a monster's drop. */
+    @Subscribe
+    public void onMenuOptionClicked(net.runelite.api.events.MenuOptionClicked e)
+    {
+        if (e.getItemId() > 0 && "Drop".equalsIgnoreCase(e.getMenuOption()))
+        {
+            groundGuard.onDropClicked(itemManager.canonicalize(e.getItemId()), client.getTickCount());
+        }
+    }
+
+    /** A ground item that belongs to another player showing up: never part of a monster's loot for this player. */
+    @Subscribe
+    public void onItemSpawned(net.runelite.api.events.ItemSpawned e)
+    {
+        TileItem item = e.getItem();
+        if (item != null && item.getOwnership() == TileItem.OWNERSHIP_OTHER)
+        {
+            groundGuard.onForeignItem(itemManager.canonicalize(item.getId()), client.getTickCount());
+        }
     }
 
     @Subscribe
@@ -1273,16 +1306,11 @@ public class ForgeBingoPlugin extends Plugin
     @Subscribe
     public void onItemDespawned(ItemDespawned e)
     {
-        // a ground item vanishing next to us is most likely our pickup: picked-up items (PvP loot included) never count
-        Player me = client.getLocalPlayer();
+        // a ground item vanishing as the same item reaches the backpack is a pickup (next to us, or from a distance
+        // with Telekinetic Grab): picked-up items, whoever dropped them, never count (PvP loot included)
         TileItem item = e.getItem();
-        if (me == null || item == null || e.getTile() == null) return;
-        WorldPoint at = e.getTile().getWorldLocation();
-        WorldPoint mine = me.getWorldLocation();
-        if (at != null && mine != null && at.getPlane() == mine.getPlane() && at.distanceTo2D(mine) <= 1)
-        {
-            activityWatcher.onGroundItemGone(itemManager.canonicalize(item.getId()), client.getTickCount());
-        }
+        if (item == null) return;
+        activityWatcher.onGroundItemGone(itemManager.canonicalize(item.getId()), client.getTickCount());
     }
 
     @Subscribe
@@ -1473,6 +1501,7 @@ public class ForgeBingoPlugin extends Plugin
         }
         petDetector.onTick(tick).ifPresent(this::reportPet);
         if (!openTradeWindows.isEmpty()) activityWatcher.onTrade(tick);
+        groundGuard.prune(tick);
         // one event (and one screenshot) per activity per tick: a chest or shop trip with several uniques counts each
         Map<String, GameEvent> byActivity = new java.util.LinkedHashMap<>();
         for (ActivityWatcher.Drop d : activityWatcher.flush(tick, inPvp()))
