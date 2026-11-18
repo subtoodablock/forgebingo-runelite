@@ -295,6 +295,10 @@ class ForgeBingoPanel extends PluginPanel
         tilesBar.setForeground(PanelUi.GOLD_DARK);
         boardCard.add(left(teamLabel));
         boardCard.add(left(eventLabel));
+        activityLabel.setFont(smallFont());
+        activityLabel.setForeground(GOOD);
+        activityLabel.setVisible(false);
+        boardCard.add(left(activityLabel));
         reviewLabel.setFont(smallFont());
         reviewLabel.setForeground(WAIT);
         reviewLabel.setVisible(false);
@@ -363,6 +367,28 @@ class ForgeBingoPanel extends PluginPanel
     }
 
     private final JLabel headToggle = new JLabel("Hide");
+    /** the newest thing that counted, as one quiet line under the team's name; the rest is in its tooltip */
+    private final JLabel activityLabel = new JLabel(" ");
+
+    /**
+     * The newest thing that counted (null hides the line) and the last few as the tooltip's lines. One line only,
+     * so the panel stays tidy.
+     */
+    void setActivity(String newest, List<String> recent)
+    {
+        if (newest == null || newest.isEmpty())
+        {
+            activityLabel.setVisible(false);
+            return;
+        }
+        activityLabel.setText(wrapHtml(newest, CARD_TEXT));
+        StringBuilder tip = new StringBuilder("<html><b>Recently counted</b>");
+        if (recent != null) for (String line : recent) tip.append("<br>").append(esc(line));
+        activityLabel.setToolTipText(tip.append("</html>").toString());
+        activityLabel.setVisible(true);
+        revalidate();
+        repaint();
+    }
     /** how much of the team's proof is waiting for a reviewer (player request, 2026-11-14) */
     private final JLabel reviewLabel = new JLabel(" ");
     private final Component identityGap = gap(6);
@@ -746,10 +772,21 @@ class ForgeBingoPanel extends PluginPanel
         }
         int counted = 0;
         int waiting = 0;
+        // a tile that completes with any one of its tasks shows them as Option 1 / OR / Option 2 (owner, 2026-11-15),
+        // each with its own Send screenshot, so every proof lands on the option it is for
+        boolean options = "any".equals(t.completionMode) && t.tasks.size() > 1;
+        int n = 0;
         for (ApiModels.Task k : t.tasks)
         {
             counted += k.approvedQty;
             waiting += k.pendingQty;
+            n++;
+            if (options)
+            {
+                if (n > 1) detail.add(left(cardText("OR", GOLD)));
+                detail.add(left(smallCaps("Option " + n)));
+                detail.add(gap(2));
+            }
             detail.add(taskBox(t, k, secret, opened));
             detail.add(gap(6));
         }

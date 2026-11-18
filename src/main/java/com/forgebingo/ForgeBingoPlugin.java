@@ -942,6 +942,17 @@ public class ForgeBingoPlugin extends Plugin
         return currentBoard;
     }
 
+    /** the last few things that counted, shown as one line in the side panel */
+    private final com.forgebingo.core.ActivityLog activity = new com.forgebingo.core.ActivityLog();
+
+    private void showActivity()
+    {
+        long now = System.currentTimeMillis();
+        String newest = activity.newest(now);
+        List<String> lines = activity.lines(now);
+        notifyPanel(p -> p.setActivity(newest, lines));
+    }
+
     private void notifyPanel(java.util.function.Consumer<ForgeBingoPanel> action)
     {
         SwingUtilities.invokeLater(() -> {
@@ -2027,6 +2038,11 @@ public class ForgeBingoPlugin extends Plugin
                 {
                     notice("Screenshot upload failed: " + r.describe(), true);
                 }
+                else
+                {
+                    activity.pictureSent(event.id);
+                    showActivity();
+                }
             }
             catch (java.io.IOException ex)
             {
@@ -2108,6 +2124,22 @@ public class ForgeBingoPlugin extends Plugin
                             taskNames.put(k.id, k.description);
                         }
                     }
+                }
+                // one quiet line in the side panel: what just counted
+                java.util.Set<String> counted = new java.util.LinkedHashSet<>();
+                for (ApiModels.Match m : result.matched)
+                {
+                    if (m == null) continue;
+                    String n = m.taskId == null ? null : taskNames.get(m.taskId);
+                    if (n == null || n.isEmpty()) n = m.tileId == null ? null : tileTitles.get(m.tileId);
+                    if (n != null && !n.isEmpty()) counted.add(n);
+                }
+                if (!counted.isEmpty())
+                {
+                    List<String> names = new ArrayList<>(counted);
+                    String what = names.size() <= 2 ? String.join(", ", names) : names.get(0) + ", " + names.get(1) + " +" + (names.size() - 2);
+                    activity.counted(event.id, what, System.currentTimeMillis());
+                    showActivity();
                 }
                 // a match's "completed" is its TASK; the tile is finished when matchedTiles says so
                 java.util.Set<String> tileNowDone = new java.util.HashSet<>();
