@@ -34,6 +34,24 @@ public class ActivityWatcherTest
         assertEquals(1, w.flush(51, false).size());
     }
 
+    /** owner, 2026-11-17: an item another player traded over counted as an Archive reward */
+    @Test
+    public void tradedItemsNeverCount()
+    {
+        ActivityWatcher w = new ActivityWatcher();
+        // the trade window is open for a while, closes on tick 203, the items land on that tick
+        for (int t = 190; t <= 203; t++) w.onTrade(t);
+        w.onInventoryAdded(34717, 1, 203);
+        assertTrue(w.flush(204, false).isEmpty());
+        // items that land a couple of ticks after the window closed are still the trade's
+        w.onTrade(300);
+        w.onInventoryAdded(34717, 1, 302);
+        assertTrue(w.flush(303, false).isEmpty());
+        // a real reward long after any trade still counts
+        w.onInventoryAdded(34717, 1, 400);
+        assertEquals(1, w.flush(401, false).size());
+    }
+
     /** owner, 2026-11-14: taking off an Elemental amulet (whose worn form has another id) counted as an Archive reward */
     @Test
     public void gearTakenOffNeverCountsEvenWithAnotherId()

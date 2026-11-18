@@ -19,6 +19,7 @@ import java.util.Map;
  *   <li>the worn equipment changed around that tick (taking gear off; a worn item may carry another id);</li>
  *   <li>a ground item of that id vanished next to the player around that tick (a pickup: PvP loot never counts);</li>
  *   <li>a Grand Exchange offer changed around that tick (a collect);</li>
+ *   <li>a trade with another player was open, accepted or closed around that tick (traded items never count);</li>
  *   <li>the player is in the Wilderness or on a PvP world.</li>
  * </ul>
  * Every acquisition counts, duplicates included. Pure Java so it is unit-tested without RuneLite.
@@ -103,6 +104,25 @@ public final class ActivityWatcher
         return false;
     }
 
+    /** how long after a player trade (window open, accepted or closed) a backpack gain is still that trade's items */
+    public static final int TRADE_WINDOW = 4;
+    private final java.util.Set<Integer> tradeTicks = new java.util.HashSet<>();
+
+    /**
+     * A trade with another player is open, was accepted or just closed this tick (owner, 2026-11-17: an item traded
+     * over counted as a reward). Items from another player are never a drop.
+     */
+    public void onTrade(int tick)
+    {
+        tradeTicks.add(tick);
+    }
+
+    private boolean nearTrade(int tick)
+    {
+        for (int t = tick - TRADE_WINDOW; t <= tick + 1; t++) if (tradeTicks.contains(t)) return true;
+        return false;
+    }
+
     /** A non-currency item left the backpack this tick (see the class comment). */
     public void onItemsLeftInventory(int tick)
     {
@@ -133,7 +153,7 @@ public final class ActivityWatcher
             it.remove();
             if (pvp || near(lootSeen, p.itemId, p.tick, LOOT_WINDOW, 1) || near(leftContainer, p.itemId, p.tick, MOVE_WINDOW, MOVE_WINDOW)
                 || near(pickedUp, p.itemId, p.tick, MOVE_WINDOW, MOVE_WINDOW) || Math.abs(p.tick - geTick) <= MOVE_WINDOW
-                || transformTicks.contains(p.tick) || transformTicks.contains(p.tick - 1) || nearWornChange(p.tick))
+                || transformTicks.contains(p.tick) || transformTicks.contains(p.tick - 1) || nearWornChange(p.tick) || nearTrade(p.tick))
             {
                 continue;
             }
@@ -145,6 +165,7 @@ public final class ActivityWatcher
         prune(pickedUp, tick);
         transformTicks.removeIf(t -> t < tick - KEEP);
         wornTicks.removeIf(t -> t < tick - KEEP);
+        tradeTicks.removeIf(t -> t < tick - KEEP);
         return out;
     }
 
