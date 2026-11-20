@@ -35,6 +35,9 @@ public class ActivityWatcherTest
         // kept items coming back right after the death
         w.onInventoryAdded(OATHPLATE_HELM, 1, 1010);
         assertTrue(w.flush(1011, false, now).isEmpty());
+        // a dangerous death: once it is over the atlatl is on the gravestone, not on the player
+        assertTrue(w.wantsHoldingsAfterDeath(1000 + ActivityWatcher.DEATH_WINDOW + 1, false));
+        w.onHoldingsAfterDeath(new java.util.HashMap<>());
         // the atlatl reclaimed from a gravestone or Death's office hours later
         long later = now + 5L * 60 * 60 * 1000;
         w.onInventoryAdded(ATLATL, 1, 30000);
@@ -62,11 +65,36 @@ public class ActivityWatcherTest
         long now = 1_000_000L;
         ActivityWatcher w = new ActivityWatcher();
         w.onDeath(1000, held(ATLATL, 1), now);
-        assertTrue(!w.wantsHoldingsAfterDeath(1010));
-        assertTrue(w.wantsHoldingsAfterDeath(1000 + ActivityWatcher.DEATH_WINDOW + 1));
+        assertTrue(!w.wantsHoldingsAfterDeath(1010, false));
+        assertTrue(w.wantsHoldingsAfterDeath(1000 + ActivityWatcher.DEATH_WINDOW + 1, false));
         w.onHoldingsAfterDeath(held(ATLATL, 1)); // still has it
         w.onInventoryAdded(ATLATL, 1, 2000);
         assertEquals(1, w.flush(2001, false, now + 60_000).size());
+    }
+
+    /**
+     * owner 2026-11-19: in Chambers of Xeric, Theatre of Blood and Tombs of Amascut the player respawns with their
+     * gear, sometimes minutes later (when the room ends). Nothing counts until they leave the raid.
+     */
+    @Test
+    public void respawningWithGearInARaidNeverCounts()
+    {
+        final int ATLATL = 29000;
+        long now = 1_000_000L;
+        ActivityWatcher w = new ActivityWatcher();
+        w.onDeath(1000, held(ATLATL, 1), now);
+        // the same death seen again (hitpoints reaching 0 as well): counted once
+        w.onDeath(1001, held(ATLATL, 1), now);
+        // still in the raid long after the death: no settling yet, and the gear handed back does not count
+        assertTrue(!w.wantsHoldingsAfterDeath(1500, true));
+        w.onInventoryAdded(ATLATL, 1, 1500);
+        w.onInventoryAdded(OATHPLATE_HELM, 1, 1500);
+        assertTrue(w.flush(1501, false, now + 300_000).isEmpty());
+        // left the raid holding the atlatl: it was given back, so a real new one later counts (once)
+        assertTrue(w.wantsHoldingsAfterDeath(1600, false));
+        w.onHoldingsAfterDeath(held(ATLATL, 1));
+        w.onInventoryAdded(ATLATL, 1, 2000);
+        assertEquals(1, w.flush(2001, false, now + 400_000).size());
     }
 
     /** reclaiming after restarting RuneLite, or after dying twice, still does not count */

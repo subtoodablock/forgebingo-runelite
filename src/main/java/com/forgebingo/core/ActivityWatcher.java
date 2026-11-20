@@ -144,6 +144,8 @@ public final class ActivityWatcher
      */
     public void onDeath(int tick, Map<Integer, Integer> held, long nowMillis)
     {
+        // the same death seen twice (RuneLite's death event and hitpoints reaching 0): count its items once
+        if (tick >= deathTick && tick - deathTick <= DEATH_WINDOW) return;
         deathTick = tick;
         settlePending = true;
         if (held == null) return;
@@ -157,10 +159,14 @@ public final class ActivityWatcher
         deathMemoryChanged = true;
     }
 
-    /** true once, when the death moment is over and the plugin should report what the player still holds */
-    public boolean wantsHoldingsAfterDeath(int tick)
+    /**
+     * true once, when the death moment is over and the plugin should report what the player still holds. Inside a
+     * raid or other instance (Chambers of Xeric, Theatre of Blood, Tombs of Amascut, the Colosseum) the player can
+     * respawn with their gear much later, so the death moment lasts until they leave it (owner, 2026-11-19).
+     */
+    public boolean wantsHoldingsAfterDeath(int tick, boolean inInstance)
     {
-        return settlePending && tick - deathTick > DEATH_WINDOW;
+        return settlePending && !inInstance && tick - deathTick > DEATH_WINDOW;
     }
 
     /**
@@ -188,7 +194,8 @@ public final class ActivityWatcher
     private boolean afterDeath(Pending p, long nowMillis)
     {
         int since = p.tick - deathTick;
-        if (since >= 0 && since <= DEATH_WINDOW) return true;
+        // the death moment: until the player has left the raid or instance they died in, nothing counts
+        if (since >= 0 && (since <= DEATH_WINDOW || settlePending)) return true;
         long[] e = lostAtDeath.get(p.itemId);
         if (e == null || e[1] < nowMillis) return false;
         return useUp(p.itemId, p.quantity);
