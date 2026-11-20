@@ -20,6 +20,7 @@ import java.util.Map;
  *   <li>a ground item of that id vanished next to the player around that tick (a pickup: PvP loot never counts);</li>
  *   <li>a Grand Exchange offer changed around that tick (a collect);</li>
  *   <li>a trade with another player was open, accepted or closed around that tick (traded items never count);</li>
+ *   <li>the player died moments ago, or it is an item they had when they died coming back to them;</li>
  *   <li>the player is in the Wilderness or on a PvP world.</li>
  * </ul>
  * Every acquisition counts, duplicates included. Pure Java so it is unit-tested without RuneLite.
@@ -123,6 +124,39 @@ public final class ActivityWatcher
         return false;
     }
 
+    /** right after the player dies nothing that reaches the backpack is a reward (kept items being handed back) */
+    public static final int DEATH_WINDOW = 25;
+    /** how long the items the player had when they died are remembered (gravestone, Death's office, safe deaths) */
+    public static final int DEATH_MEMORY = 6000;
+    private int deathTick = Integer.MIN_VALUE / 2;
+    private final Map<Integer, Integer> heldAtDeath = new HashMap<>();
+
+    /**
+     * The player died this tick holding {@code held} (backpack and worn, item id to amount). Getting those items back,
+     * whether kept at a safe death or reclaimed later, never counts as a reward (owner, 2026-11-19: a player's own
+     * Eclipse atlatl counted as a Moons of Peril drop after they died at the Colosseum).
+     */
+    public void onDeath(int tick, Map<Integer, Integer> held)
+    {
+        deathTick = tick;
+        heldAtDeath.clear();
+        if (held != null) held.forEach((id, qty) -> { if (qty != null && qty > 0) heldAtDeath.merge(id, qty, Integer::sum); });
+    }
+
+    /** true when this gain is the player getting back something they had when they died (uses up that amount) */
+    private boolean afterDeath(Pending p)
+    {
+        int since = p.tick - deathTick;
+        if (since < 0 || since > DEATH_MEMORY) return false;
+        if (since <= DEATH_WINDOW) return true;
+        Integer had = heldAtDeath.get(p.itemId);
+        if (had == null || had <= 0) return false;
+        int left = had - p.quantity;
+        if (left > 0) heldAtDeath.put(p.itemId, left);
+        else heldAtDeath.remove(p.itemId);
+        return true;
+    }
+
     /** A non-currency item left the backpack this tick (see the class comment). */
     public void onItemsLeftInventory(int tick)
     {
@@ -153,7 +187,7 @@ public final class ActivityWatcher
             it.remove();
             if (pvp || near(lootSeen, p.itemId, p.tick, LOOT_WINDOW, 1) || near(leftContainer, p.itemId, p.tick, MOVE_WINDOW, MOVE_WINDOW)
                 || near(pickedUp, p.itemId, p.tick, MOVE_WINDOW, MOVE_WINDOW) || Math.abs(p.tick - geTick) <= MOVE_WINDOW
-                || transformTicks.contains(p.tick) || transformTicks.contains(p.tick - 1) || nearWornChange(p.tick) || nearTrade(p.tick))
+                || transformTicks.contains(p.tick) || transformTicks.contains(p.tick - 1) || nearWornChange(p.tick) || nearTrade(p.tick) || afterDeath(p))
             {
                 continue;
             }

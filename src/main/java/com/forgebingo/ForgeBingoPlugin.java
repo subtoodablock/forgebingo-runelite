@@ -1331,6 +1331,22 @@ public class ForgeBingoPlugin extends Plugin
         activityWatcher.onGroundItemGone(itemManager.canonicalize(item.getId()), client.getTickCount());
     }
 
+    /**
+     * The player died (anywhere, safe deaths like the Colosseum included): the items they had coming back to them
+     * afterwards are their own, never a reward (owner, 2026-11-19).
+     */
+    @Subscribe
+    public void onActorDeath(net.runelite.api.events.ActorDeath e)
+    {
+        if (e.getActor() == null || e.getActor() != client.getLocalPlayer()) return;
+        Map<Integer, Integer> held = new java.util.HashMap<>();
+        Map<Integer, Integer> pack = lastInventory;
+        if (pack != null) pack.forEach((id, q) -> held.merge(itemManager.canonicalize(id), q, Integer::sum));
+        Map<Integer, Integer> worn = lastContainers.get(WORN_CONTAINER_ID);
+        if (worn != null) worn.forEach((id, q) -> held.merge(itemManager.canonicalize(id), q, Integer::sum));
+        activityWatcher.onDeath(client.getTickCount(), held);
+    }
+
     @Subscribe
     public void onGrandExchangeOfferChanged(GrandExchangeOfferChanged e)
     {
