@@ -1339,6 +1339,12 @@ public class ForgeBingoPlugin extends Plugin
     public void onActorDeath(net.runelite.api.events.ActorDeath e)
     {
         if (e.getActor() == null || e.getActor() != client.getLocalPlayer()) return;
+        playerDied();
+    }
+
+    /** RuneLite's death event, or hitpoints reaching 0 (a backup for raids and minigames); one death counts once */
+    private void playerDied()
+    {
         activityWatcher.onDeath(client.getTickCount(), holdings(), System.currentTimeMillis());
         saveDeathMemory();
     }
@@ -1426,6 +1432,8 @@ public class ForgeBingoPlugin extends Plugin
         Skill skill = e.getSkill();
         int level = e.getLevel();
         if (skill == Skill.OVERALL) return;
+        // hitpoints at 0 while logged in is a death, in raids too (Chambers of Xeric, Theatre of Blood, Tombs of Amascut)
+        if (skill == Skill.HITPOINTS && e.getBoostedLevel() == 0 && level > 0 && client.getGameState() == GameState.LOGGED_IN) playerDied();
         Integer previous = levels.put(skill, level);
         if (previous == null || level <= previous || !config.sendLevels()) return;
         GameEvent ev = base(GameEvent.LEVEL);
@@ -1585,7 +1593,7 @@ public class ForgeBingoPlugin extends Plugin
             restoreDeathMemory();
         }
         // the death moment is over: what the player still has was kept, not waiting to come back
-        if (activityWatcher.wantsHoldingsAfterDeath(tick)) activityWatcher.onHoldingsAfterDeath(holdings());
+        if (activityWatcher.wantsHoldingsAfterDeath(tick, instance)) activityWatcher.onHoldingsAfterDeath(holdings());
         List<ActivityWatcher.Drop> drops = activityWatcher.flush(tick, inPvp(), System.currentTimeMillis());
         if (activityWatcher.deathMemoryChanged()) saveDeathMemory();
         for (ActivityWatcher.Drop d : drops)
