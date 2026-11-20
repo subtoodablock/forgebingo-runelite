@@ -24,6 +24,29 @@ public class ActivityWatcherTest
         assertEquals("Barbarian Assault", d.get(0).activity);
     }
 
+    /** owner 2026-11-19: dying at the Colosseum handed back the player's own Eclipse atlatl, which counted as Moons */
+    @Test
+    public void itemsGivenBackAfterDyingNeverCount()
+    {
+        final int ATLATL = 29000;
+        ActivityWatcher w = new ActivityWatcher();
+        java.util.Map<Integer, Integer> held = new java.util.HashMap<>();
+        held.put(ATLATL, 1);
+        w.onDeath(1000, held);
+        // kept items coming back right after the death
+        w.onInventoryAdded(OATHPLATE_HELM, 1, 1010);
+        assertTrue(w.flush(1011, false).isEmpty());
+        // the atlatl reclaimed from a gravestone or Death's office much later
+        w.onInventoryAdded(ATLATL, 1, 3000);
+        assertTrue(w.flush(3001, false).isEmpty());
+        // a real new one afterwards counts again
+        w.onInventoryAdded(ATLATL, 1, 3500);
+        assertEquals(1, w.flush(3501, false).size());
+        // and something the player did not have when they died counts once the death moment has passed
+        w.onInventoryAdded(OATHPLATE_HELM, 1, 3600);
+        assertEquals(1, w.flush(3601, false).size());
+    }
+
     @Test
     public void duplicatesCountEveryTime()
     {
