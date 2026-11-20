@@ -29,22 +29,70 @@ public class ActivityWatcherTest
     public void itemsGivenBackAfterDyingNeverCount()
     {
         final int ATLATL = 29000;
+        long now = 1_000_000L;
         ActivityWatcher w = new ActivityWatcher();
-        java.util.Map<Integer, Integer> held = new java.util.HashMap<>();
-        held.put(ATLATL, 1);
-        w.onDeath(1000, held);
+        w.onDeath(1000, held(ATLATL, 1), now);
         // kept items coming back right after the death
         w.onInventoryAdded(OATHPLATE_HELM, 1, 1010);
-        assertTrue(w.flush(1011, false).isEmpty());
-        // the atlatl reclaimed from a gravestone or Death's office much later
-        w.onInventoryAdded(ATLATL, 1, 3000);
-        assertTrue(w.flush(3001, false).isEmpty());
+        assertTrue(w.flush(1011, false, now).isEmpty());
+        // the atlatl reclaimed from a gravestone or Death's office hours later
+        long later = now + 5L * 60 * 60 * 1000;
+        w.onInventoryAdded(ATLATL, 1, 30000);
+        assertTrue(w.flush(30001, false, later).isEmpty());
         // a real new one afterwards counts again
-        w.onInventoryAdded(ATLATL, 1, 3500);
-        assertEquals(1, w.flush(3501, false).size());
+        w.onInventoryAdded(ATLATL, 1, 30500);
+        assertEquals(1, w.flush(30501, false, later).size());
         // and something the player did not have when they died counts once the death moment has passed
-        w.onInventoryAdded(OATHPLATE_HELM, 1, 3600);
-        assertEquals(1, w.flush(3601, false).size());
+        w.onInventoryAdded(OATHPLATE_HELM, 1, 30600);
+        assertEquals(1, w.flush(30601, false, later).size());
+    }
+
+    private static java.util.Map<Integer, Integer> held(int id, int qty)
+    {
+        java.util.Map<Integer, Integer> m = new java.util.HashMap<>();
+        m.put(id, qty);
+        return m;
+    }
+
+    /** a safe death where the gear was kept: a real new drop of that item later still counts */
+    @Test
+    public void gearKeptAtASafeDeathDoesNotBlockARealDropLater()
+    {
+        final int ATLATL = 29000;
+        long now = 1_000_000L;
+        ActivityWatcher w = new ActivityWatcher();
+        w.onDeath(1000, held(ATLATL, 1), now);
+        assertTrue(!w.wantsHoldingsAfterDeath(1010));
+        assertTrue(w.wantsHoldingsAfterDeath(1000 + ActivityWatcher.DEATH_WINDOW + 1));
+        w.onHoldingsAfterDeath(held(ATLATL, 1)); // still has it
+        w.onInventoryAdded(ATLATL, 1, 2000);
+        assertEquals(1, w.flush(2001, false, now + 60_000).size());
+    }
+
+    /** reclaiming after restarting RuneLite, or after dying twice, still does not count */
+    @Test
+    public void deathMemorySurvivesARestartAndAddsUpOverDeaths()
+    {
+        final int ATLATL = 29000;
+        long now = 1_000_000L;
+        ActivityWatcher first = new ActivityWatcher();
+        first.onDeath(1000, held(ATLATL, 1), now);
+        first.onDeath(1200, held(OATHPLATE_HELM, 1), now + 1000);
+        assertTrue(first.deathMemoryChanged());
+        String saved = first.saveDeathMemory();
+        assertTrue(!first.deathMemoryChanged());
+
+        ActivityWatcher restarted = new ActivityWatcher();
+        restarted.restoreDeathMemory(saved, now + 60_000);
+        restarted.onInventoryAdded(ATLATL, 1, 50);
+        restarted.onInventoryAdded(OATHPLATE_HELM, 1, 50);
+        assertTrue(restarted.flush(51, false, now + 60_000).isEmpty());
+
+        // a day later it is forgotten, and damaged text is ignored
+        ActivityWatcher nextDay = new ActivityWatcher();
+        nextDay.restoreDeathMemory(saved + ";junk;1:x:2", now + ActivityWatcher.DEATH_MEMORY_MILLIS + 5000);
+        nextDay.onInventoryAdded(ATLATL, 1, 50);
+        assertEquals(1, nextDay.flush(51, false, now + ActivityWatcher.DEATH_MEMORY_MILLIS + 5000).size());
     }
 
     @Test

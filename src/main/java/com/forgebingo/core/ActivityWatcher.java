@@ -126,35 +126,124 @@ public final class ActivityWatcher
 
     /** right after the player dies nothing that reaches the backpack is a reward (kept items being handed back) */
     public static final int DEATH_WINDOW = 25;
-    /** how long the items the player had when they died are remembered (gravestone, Death's office, safe deaths) */
-    public static final int DEATH_MEMORY = 6000;
+    /**
+     * how long the items lost at a death are remembered: reclaiming them from a gravestone, Death's office or a boss's
+     * item-retrieval service never counts. A day, so a player who restarts or reclaims much later is still covered.
+     */
+    public static final long DEATH_MEMORY_MILLIS = 24L * 60 * 60 * 1000;
     private int deathTick = Integer.MIN_VALUE / 2;
-    private final Map<Integer, Integer> heldAtDeath = new HashMap<>();
+    private boolean settlePending;
+    /** item id to {amount still to come back, forget-at millis} */
+    private final Map<Integer, long[]> lostAtDeath = new HashMap<>();
+    private boolean deathMemoryChanged;
 
     /**
      * The player died this tick holding {@code held} (backpack and worn, item id to amount). Getting those items back,
      * whether kept at a safe death or reclaimed later, never counts as a reward (owner, 2026-11-19: a player's own
-     * Eclipse atlatl counted as a Moons of Peril drop after they died at the Colosseum).
+     * Eclipse atlatl counted as a Moons of Peril drop after they died at the Colosseum). Several deaths add up.
      */
-    public void onDeath(int tick, Map<Integer, Integer> held)
+    public void onDeath(int tick, Map<Integer, Integer> held, long nowMillis)
     {
         deathTick = tick;
-        heldAtDeath.clear();
-        if (held != null) held.forEach((id, qty) -> { if (qty != null && qty > 0) heldAtDeath.merge(id, qty, Integer::sum); });
+        settlePending = true;
+        if (held == null) return;
+        long forgetAt = nowMillis + DEATH_MEMORY_MILLIS;
+        held.forEach((id, qty) -> {
+            if (id == null || qty == null || qty <= 0 || ActivityItems.activityFor(id) == null) return;
+            long[] e = lostAtDeath.computeIfAbsent(id, k -> new long[]{0, 0});
+            e[0] += qty;
+            e[1] = Math.max(e[1], forgetAt);
+        });
+        deathMemoryChanged = true;
+    }
+
+    /** true once, when the death moment is over and the plugin should report what the player still holds */
+    public boolean wantsHoldingsAfterDeath(int tick)
+    {
+        return settlePending && tick - deathTick > DEATH_WINDOW;
+    }
+
+    /**
+     * What the player holds (backpack and worn) once the death moment is over. Those were kept (a safe death), so they
+     * are no longer waiting to come back; a real new drop of them later counts again.
+     */
+    public void onHoldingsAfterDeath(Map<Integer, Integer> held)
+    {
+        settlePending = false;
+        if (held == null) return;
+        held.forEach((id, qty) -> { if (qty != null) useUp(id, qty); });
+    }
+
+    private boolean useUp(int itemId, int qty)
+    {
+        long[] e = lostAtDeath.get(itemId);
+        if (e == null || qty <= 0) return false;
+        e[0] -= qty;
+        if (e[0] <= 0) lostAtDeath.remove(itemId);
+        deathMemoryChanged = true;
+        return true;
     }
 
     /** true when this gain is the player getting back something they had when they died (uses up that amount) */
-    private boolean afterDeath(Pending p)
+    private boolean afterDeath(Pending p, long nowMillis)
     {
         int since = p.tick - deathTick;
-        if (since < 0 || since > DEATH_MEMORY) return false;
-        if (since <= DEATH_WINDOW) return true;
-        Integer had = heldAtDeath.get(p.itemId);
-        if (had == null || had <= 0) return false;
-        int left = had - p.quantity;
-        if (left > 0) heldAtDeath.put(p.itemId, left);
-        else heldAtDeath.remove(p.itemId);
-        return true;
+        if (since >= 0 && since <= DEATH_WINDOW) return true;
+        long[] e = lostAtDeath.get(p.itemId);
+        if (e == null || e[1] < nowMillis) return false;
+        return useUp(p.itemId, p.quantity);
+    }
+
+    /** The death memory as text to keep between sessions ("id:amount:forgetAt;..."). */
+    public String saveDeathMemory()
+    {
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<Integer, long[]> e : lostAtDeath.entrySet())
+        {
+            if (sb.length() > 0) sb.append(';');
+            sb.append(e.getKey()).append(':').append(e.getValue()[0]).append(':').append(e.getValue()[1]);
+        }
+        deathMemoryChanged = false;
+        return sb.toString();
+    }
+
+    /** Puts back a death memory saved earlier (other entries of this session are kept); bad text is ignored. */
+    public void restoreDeathMemory(String saved, long nowMillis)
+    {
+        if (saved == null || saved.isEmpty()) return;
+        for (String part : saved.split(";"))
+        {
+            String[] f = part.split(":");
+            if (f.length != 3) continue;
+            try
+            {
+                int id = Integer.parseInt(f[0].trim());
+                long qty = Long.parseLong(f[1].trim());
+                long forgetAt = Long.parseLong(f[2].trim());
+                if (qty <= 0 || forgetAt < nowMillis || ActivityItems.activityFor(id) == null) continue;
+                long[] e = lostAtDeath.computeIfAbsent(id, k -> new long[]{0, 0});
+                e[0] = Math.max(e[0], Math.min(qty, 1000));
+                e[1] = Math.max(e[1], Math.min(forgetAt, nowMillis + DEATH_MEMORY_MILLIS));
+            }
+            catch (NumberFormatException ignored)
+            {
+                // a hand-edited or damaged value: skip that entry
+            }
+        }
+    }
+
+    /** Forgets every death (another account logged in: its own memory is restored next). */
+    public void clearDeathMemory()
+    {
+        lostAtDeath.clear();
+        settlePending = false;
+        deathMemoryChanged = false;
+    }
+
+    /** true when the death memory changed since it was last saved */
+    public boolean deathMemoryChanged()
+    {
+        return deathMemoryChanged;
     }
 
     /** A non-currency item left the backpack this tick (see the class comment). */
@@ -175,6 +264,12 @@ public final class ActivityWatcher
     /** Call once per game tick. Returns what to report from earlier ticks. */
     public List<Drop> flush(int tick, boolean pvp)
     {
+        return flush(tick, pvp, System.currentTimeMillis());
+    }
+
+    public List<Drop> flush(int tick, boolean pvp, long nowMillis)
+    {
+        lostAtDeath.values().removeIf(e -> e[1] < nowMillis);
         List<Drop> out = new ArrayList<>();
         Iterator<Pending> it = pending.iterator();
         while (it.hasNext())
@@ -185,9 +280,10 @@ public final class ActivityWatcher
                 continue;
             }
             it.remove();
-            if (pvp || near(lootSeen, p.itemId, p.tick, LOOT_WINDOW, 1) || near(leftContainer, p.itemId, p.tick, MOVE_WINDOW, MOVE_WINDOW)
+            boolean cameBack = afterDeath(p, nowMillis);
+            if (cameBack || pvp || near(lootSeen, p.itemId, p.tick, LOOT_WINDOW, 1) || near(leftContainer, p.itemId, p.tick, MOVE_WINDOW, MOVE_WINDOW)
                 || near(pickedUp, p.itemId, p.tick, MOVE_WINDOW, MOVE_WINDOW) || Math.abs(p.tick - geTick) <= MOVE_WINDOW
-                || transformTicks.contains(p.tick) || transformTicks.contains(p.tick - 1) || nearWornChange(p.tick) || nearTrade(p.tick) || afterDeath(p))
+                || transformTicks.contains(p.tick) || transformTicks.contains(p.tick - 1) || nearWornChange(p.tick) || nearTrade(p.tick))
             {
                 continue;
             }
