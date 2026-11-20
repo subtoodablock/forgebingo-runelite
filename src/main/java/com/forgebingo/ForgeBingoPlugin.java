@@ -746,6 +746,15 @@ public class ForgeBingoPlugin extends Plugin
         }
     }
 
+    /** which poll last failed ("boards" or "board"), so the panel goes back to "Connected" once it works again */
+    private volatile String pollProblem;
+
+    private void pollRecovered()
+    {
+        pollProblem = null;
+        notifyPanel(p -> p.setStatus(true, "Connected"));
+    }
+
     /** GET /v1/boards (cheap, every 10 s), then refetch the selected board only when its updatedAt changed. */
     private void pollBoard()
     {
@@ -764,10 +773,12 @@ public class ForgeBingoPlugin extends Plugin
         if (!list.ok() || list.body == null)
         {
             boardFailures++;
+            pollProblem = "boards";
             notifyPanel(p -> p.setStatus(false, "Boards: " + list.describe()));
             return;
         }
         boardFailures = 0;
+        if ("boards".equals(pollProblem)) pollRecovered();
         List<ApiModels.BoardSummary> boards = list.body.boards;
         // Shared reveal: a board that appears while we're running has just opened for everyone (the bingo started).
         // Switch to it, say so in chat and open it over the game with a Legendary animation.
@@ -818,9 +829,11 @@ public class ForgeBingoPlugin extends Plugin
         if (!r.ok() || r.body == null)
         {
             boardFailures++;
+            pollProblem = "board";
             notifyPanel(p -> p.setStatus(false, "Board: " + r.describe()));
             return;
         }
+        if (pollProblem != null) pollRecovered();
         ApiResult<ApiModels.LeaderboardResponse> lb = a.leaderboard(sel.teamBoardId);
         boardVersions.put(sel.teamBoardId, version);
         Map<String, String> titles = new ConcurrentHashMap<>();
@@ -1668,7 +1681,10 @@ public class ForgeBingoPlugin extends Plugin
     /** @param chestWindow the loot came from a reward chest whose loot window is on screen right now */
     private void submit(GameEvent ev, boolean maybeScreenshot, boolean chestWindow)
     {
-        if (!running || queue == null || !Sanitizer.validRsn(ev.rsn) || ev.accountHash == null || api == null || !api.configured())
+        // read once: switching the plugin off clears these fields from another thread
+        OfflineQueue q = queue;
+        ApiClient a = api;
+        if (!running || q == null || !Sanitizer.validRsn(ev.rsn) || ev.accountHash == null || a == null || !a.configured())
         {
             return;
         }
@@ -1689,9 +1705,10 @@ public class ForgeBingoPlugin extends Plugin
         {
             captureScreenshot(ev.id, shotDelays(ev.sourceType, ev.sourceName, chestWindow), chestWindow);
         }
-        List<QueuedEvent> evicted = queue.add(new QueuedEvent(ev, System.currentTimeMillis()));
-        for (QueuedEvent q : evicted) notice("Queue full, dropped oldest event: " + q.event.label(), true);
-        notifyPanel(p -> p.setQueueSize(queue == null ? 0 : queue.size(), null));
+        List<QueuedEvent> evicted = q.add(new QueuedEvent(ev, System.currentTimeMillis()));
+        for (QueuedEvent old : evicted) notice("Queue full, dropped oldest event: " + old.event.label(), true);
+        int size = q.size();
+        notifyPanel(p -> p.setQueueSize(size, null));
         scheduleQueueDrain(0);
     }
 
@@ -2114,7 +2131,7 @@ public class ForgeBingoPlugin extends Plugin
                     if (stamped == null) continue;
                 }
                 String capturedAt = first.withZoneSameInstant(java.time.ZoneOffset.UTC).toInstant().toString();
-                ApiResult<ApiModels.ProofResponse> r = api.uploadProof(t.getKey(), stamped, t.getValue(), kw, capturedAt, labels.get(t.getKey()));
+                ApiResult<ApiModels.ProofResponse> r = a.uploadProof(t.getKey(), stamped, t.getValue(), kw, capturedAt, labels.get(t.getKey()));
                 if (!r.ok())
                 {
                     notice("Screenshot upload failed: " + r.describe(), true);
