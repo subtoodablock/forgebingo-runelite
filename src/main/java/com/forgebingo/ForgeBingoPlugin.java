@@ -1648,7 +1648,7 @@ public class ForgeBingoPlugin extends Plugin
             restoreDeathMemory();
         }
         // the death moment is over: what the player still has was kept, not waiting to come back
-        if (activityWatcher.wantsHoldingsAfterDeath(tick, instance)) activityWatcher.onHoldingsAfterDeath(holdings());
+        if (activityWatcher.wantsHoldingsAfterDeath(tick, instance)) activityWatcher.onHoldingsAfterDeath(holdings(), System.currentTimeMillis());
         List<ActivityWatcher.Drop> drops = activityWatcher.flush(tick, inPvp(), System.currentTimeMillis());
         if (activityWatcher.deathMemoryChanged()) saveDeathMemory();
         for (ActivityWatcher.Drop d : drops)

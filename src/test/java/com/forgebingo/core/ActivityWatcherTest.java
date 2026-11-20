@@ -37,7 +37,7 @@ public class ActivityWatcherTest
         assertTrue(w.flush(1011, false, now).isEmpty());
         // a dangerous death: once it is over the atlatl is on the gravestone, not on the player
         assertTrue(w.wantsHoldingsAfterDeath(1000 + ActivityWatcher.DEATH_WINDOW + 1, false));
-        w.onHoldingsAfterDeath(new java.util.HashMap<>());
+        w.onHoldingsAfterDeath(new java.util.HashMap<>(), now);
         // the atlatl reclaimed from a gravestone or Death's office hours later
         long later = now + 5L * 60 * 60 * 1000;
         w.onInventoryAdded(ATLATL, 1, 30000);
@@ -67,9 +67,9 @@ public class ActivityWatcherTest
         w.onDeath(1000, held(ATLATL, 1), now);
         assertTrue(!w.wantsHoldingsAfterDeath(1010, false));
         assertTrue(w.wantsHoldingsAfterDeath(1000 + ActivityWatcher.DEATH_WINDOW + 1, false));
-        w.onHoldingsAfterDeath(held(ATLATL, 1)); // still has it
+        w.onHoldingsAfterDeath(held(ATLATL, 1), now); // still has it
         w.onInventoryAdded(ATLATL, 1, 2000);
-        assertEquals(1, w.flush(2001, false, now + 60_000).size());
+        assertEquals(1, w.flush(2001, false, now + ActivityWatcher.KEPT_MEMORY_MILLIS + 1000).size());
     }
 
     /**
@@ -92,9 +92,36 @@ public class ActivityWatcherTest
         assertTrue(w.flush(1501, false, now + 300_000).isEmpty());
         // left the raid holding the atlatl: it was given back, so a real new one later counts (once)
         assertTrue(w.wantsHoldingsAfterDeath(1600, false));
-        w.onHoldingsAfterDeath(held(ATLATL, 1));
+        w.onHoldingsAfterDeath(held(ATLATL, 1), now + 300_000);
         w.onInventoryAdded(ATLATL, 1, 2000);
-        assertEquals(1, w.flush(2001, false, now + 400_000).size());
+        assertEquals(1, w.flush(2001, false, now + 300_000 + ActivityWatcher.KEPT_MEMORY_MILLIS + 1000).size());
+    }
+
+    /**
+     * owner 2026-11-19, The Fractured Archive: a player who dies while the team lives keeps their gear; if the game
+     * takes it away and hands it back when the room ends, it must not count, even if the plugin did not see the raid
+     * as an instance and settled the death early.
+     */
+    @Test
+    public void fracturedArchiveGearHandedBackLaterNeverCounts()
+    {
+        final int OBLIGATOR = 34717;
+        long now = 1_000_000L;
+        ActivityWatcher w = new ActivityWatcher();
+        w.onDeath(1000, held(OBLIGATOR, 1), now);
+        // settled early, outside an instance, while still holding the weapon
+        assertTrue(w.wantsHoldingsAfterDeath(1000 + ActivityWatcher.DEATH_WINDOW + 1, false));
+        w.onHoldingsAfterDeath(held(OBLIGATOR, 1), now + 20_000);
+        // the weapon taken away and handed back ten minutes later
+        w.onInventoryAdded(OBLIGATOR, 1, 2000);
+        assertTrue(w.flush(2001, false, now + 600_000).isEmpty());
+
+        // a whole-team wipe: thrown out, the gear on a gravestone outside the entrance, reclaimed an hour later
+        ActivityWatcher wipe = new ActivityWatcher();
+        wipe.onDeath(1000, held(OBLIGATOR, 1), now);
+        wipe.onHoldingsAfterDeath(new java.util.HashMap<>(), now + 20_000);
+        wipe.onInventoryAdded(OBLIGATOR, 1, 9000);
+        assertTrue(wipe.flush(9001, false, now + 3_600_000).isEmpty());
     }
 
     /** reclaiming after restarting RuneLite, or after dying twice, still does not count */

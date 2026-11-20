@@ -170,14 +170,28 @@ public final class ActivityWatcher
     }
 
     /**
-     * What the player holds (backpack and worn) once the death moment is over. Those were kept (a safe death), so they
-     * are no longer waiting to come back; a real new drop of them later counts again.
+     * how long gear the player still had once a death was over stays remembered: long enough that a raid taking it
+     * away and handing it back later (The Fractured Archive, Theatre of Blood style deaths) does not count, short
+     * enough that a real new drop of it soon after counts again
      */
-    public void onHoldingsAfterDeath(Map<Integer, Integer> held)
+    public static final long KEPT_MEMORY_MILLIS = 30L * 60 * 1000;
+
+    /**
+     * What the player holds (backpack and worn) once the death moment is over. Those were kept (a safe death); they
+     * are remembered for {@link #KEPT_MEMORY_MILLIS} instead of a day, in case the game takes them away and hands
+     * them back (owner, 2026-11-19: raids, The Fractured Archive). Items not held stay remembered for the full day.
+     */
+    public void onHoldingsAfterDeath(Map<Integer, Integer> held, long nowMillis)
     {
         settlePending = false;
         if (held == null) return;
-        held.forEach((id, qty) -> { if (qty != null) useUp(id, qty); });
+        long keptUntil = nowMillis + KEPT_MEMORY_MILLIS;
+        held.forEach((id, qty) -> {
+            long[] e = id == null ? null : lostAtDeath.get(id);
+            if (e == null || qty == null || qty <= 0) return;
+            e[1] = Math.min(e[1], keptUntil);
+            deathMemoryChanged = true;
+        });
     }
 
     private boolean useUp(int itemId, int qty)
