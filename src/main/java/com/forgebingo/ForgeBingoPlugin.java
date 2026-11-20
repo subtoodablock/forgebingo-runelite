@@ -1339,12 +1339,51 @@ public class ForgeBingoPlugin extends Plugin
     public void onActorDeath(net.runelite.api.events.ActorDeath e)
     {
         if (e.getActor() == null || e.getActor() != client.getLocalPlayer()) return;
+        activityWatcher.onDeath(client.getTickCount(), holdings(), System.currentTimeMillis());
+        saveDeathMemory();
+    }
+
+    /** what the player carries and wears right now, item id (canonical) to amount */
+    private Map<Integer, Integer> holdings()
+    {
         Map<Integer, Integer> held = new java.util.HashMap<>();
         Map<Integer, Integer> pack = lastInventory;
         if (pack != null) pack.forEach((id, q) -> held.merge(itemManager.canonicalize(id), q, Integer::sum));
         Map<Integer, Integer> worn = lastContainers.get(WORN_CONTAINER_ID);
         if (worn != null) worn.forEach((id, q) -> held.merge(itemManager.canonicalize(id), q, Integer::sum));
-        activityWatcher.onDeath(client.getTickCount(), held);
+        return held;
+    }
+
+    /**
+     * Items lost at a death are kept per account between sessions, so reclaiming them after a restart still does not
+     * count. Only item ids, amounts and times: nothing is sent anywhere.
+     */
+    private static final String DEATH_MEMORY_KEY = "deathItems";
+    private boolean deathMemoryRestorePending = true;
+
+    private void saveDeathMemory()
+    {
+        try
+        {
+            configManager.setRSProfileConfiguration(ForgeBingoConfig.GROUP, DEATH_MEMORY_KEY, activityWatcher.saveDeathMemory());
+        }
+        catch (RuntimeException ex)
+        {
+            log.debug("could not save the death memory", ex);
+        }
+    }
+
+    private void restoreDeathMemory()
+    {
+        try
+        {
+            activityWatcher.clearDeathMemory();
+            activityWatcher.restoreDeathMemory(configManager.getRSProfileConfiguration(ForgeBingoConfig.GROUP, DEATH_MEMORY_KEY), System.currentTimeMillis());
+        }
+        catch (RuntimeException ex)
+        {
+            log.debug("could not read the death memory", ex);
+        }
     }
 
     @Subscribe
@@ -1503,6 +1542,7 @@ public class ForgeBingoPlugin extends Plugin
         {
             freshLogin = false;
             helloPending = true; // another account may have logged in: verify again
+            deathMemoryRestorePending = true;
             helloNotBefore = 0;
         }
         if (e.getGameState() == GameState.LOGIN_SCREEN)
@@ -1538,7 +1578,17 @@ public class ForgeBingoPlugin extends Plugin
         groundGuard.prune(tick);
         // one event (and one screenshot) per activity per tick: a chest or shop trip with several uniques counts each
         Map<String, GameEvent> byActivity = new java.util.LinkedHashMap<>();
-        for (ActivityWatcher.Drop d : activityWatcher.flush(tick, inPvp()))
+        // the account's death memory, once its profile is loaded after logging in
+        if (deathMemoryRestorePending && client.getLocalPlayer() != null && lastInventory != null)
+        {
+            deathMemoryRestorePending = false;
+            restoreDeathMemory();
+        }
+        // the death moment is over: what the player still has was kept, not waiting to come back
+        if (activityWatcher.wantsHoldingsAfterDeath(tick)) activityWatcher.onHoldingsAfterDeath(holdings());
+        List<ActivityWatcher.Drop> drops = activityWatcher.flush(tick, inPvp(), System.currentTimeMillis());
+        if (activityWatcher.deathMemoryChanged()) saveDeathMemory();
+        for (ActivityWatcher.Drop d : drops)
         {
             if (!config.sendChestLoot()) continue;
             GameEvent ev = byActivity.computeIfAbsent(d.activity, k -> {
