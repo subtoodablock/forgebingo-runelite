@@ -120,6 +120,9 @@ public final class ApiModels
         public boolean completed;
         /** points this task is worth (null from servers before per-task points) */
         public Integer points;
+        /** "OR" options: tasks of one tile sharing this number are options of one task, any one finishes it and
+         *  only the finished one scores (servers from 2026-11-16; null = a task on its own) */
+        public Integer group;
         /** the reviewer's reason when the newest proof was sent back, else null */
         public String rejectedReason;
         /** "one of each": every item (or item group) is its own sub-task (servers from 2026-11-11; null before) */

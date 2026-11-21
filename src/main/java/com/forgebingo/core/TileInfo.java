@@ -2,7 +2,9 @@ package com.forgebingo.core;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Tile rules shared by the sidebar panel and the board overlay (owner request, 2026-11-07), matching the website:
@@ -33,30 +35,88 @@ public final class TileInfo
         return "?".equals(t.title) && (t.tasks == null || t.tasks.isEmpty());
     }
 
-    /** Points the tile is worth: the sum of its task points (servers before task points: the tile's own points). */
+    /**
+     * The tile's tasks as the website counts them: tasks of an "all" tile that share a group number are the "OR"
+     * options of one task; every other task stands alone. Order follows the server's.
+     */
+    public static List<List<ApiModels.Task>> taskGroups(ApiModels.Tile t)
+    {
+        List<List<ApiModels.Task>> out = new ArrayList<>();
+        if (t == null || t.tasks == null) return out;
+        Map<Integer, List<ApiModels.Task>> byGroup = new HashMap<>();
+        boolean all = !"any".equals(t.completionMode);
+        for (ApiModels.Task k : t.tasks)
+        {
+            if (all && k.group != null)
+            {
+                List<ApiModels.Task> g = byGroup.get(k.group);
+                if (g != null)
+                {
+                    g.add(k);
+                    continue;
+                }
+                g = new ArrayList<>();
+                g.add(k);
+                byGroup.put(k.group, g);
+                out.add(g);
+            }
+            else
+            {
+                List<ApiModels.Task> g = new ArrayList<>();
+                g.add(k);
+                out.add(g);
+            }
+        }
+        return out;
+    }
+
+    private static int pts(ApiModels.Task k)
+    {
+        return k.points == null ? 0 : Math.max(0, k.points);
+    }
+
+    private static boolean hasTaskPoints(ApiModels.Tile t)
+    {
+        if (t == null || t.tasks == null) return false;
+        for (ApiModels.Task k : t.tasks) if (k.points != null) return true;
+        return false;
+    }
+
+    /**
+     * The most the tile can score, matching the server: every task adds its points, a task with "OR" options adds
+     * its best option once, an older "any one" tile its best task (servers before task points: the tile's own points).
+     */
     public static int worth(ApiModels.Tile t)
     {
         if (t == null) return 0;
+        if (!hasTaskPoints(t)) return t.points;
         int sum = 0;
-        boolean any = false;
-        if (t.tasks != null)
+        int best = 0;
+        for (List<ApiModels.Task> g : taskGroups(t))
         {
-            for (ApiModels.Task k : t.tasks)
-            {
-                if (k.points != null)
-                {
-                    sum += Math.max(0, k.points);
-                    any = true;
-                }
-            }
+            int top = 0;
+            for (ApiModels.Task k : g) top = Math.max(top, pts(k));
+            sum += top;
+            best = Math.max(best, top);
         }
-        if (!any) return t.points;
-        // "any one task finishes it": the best task counts
-        if ("any".equals(t.completionMode))
+        return "any".equals(t.completionMode) ? best : sum;
+    }
+
+    /**
+     * Points the team has scored on the tile so far, matching the server: each finished task scores as soon as it is
+     * done (the tile need not be complete); a task with "OR" options scores only its finished option (the best one if
+     * more than one is done).
+     */
+    public static int earned(ApiModels.Tile t)
+    {
+        if (t == null) return 0;
+        if (!hasTaskPoints(t)) return t.completed ? t.points : 0;
+        int sum = 0;
+        for (List<ApiModels.Task> g : taskGroups(t))
         {
-            int best = 0;
-            for (ApiModels.Task k : t.tasks) if (k.points != null) best = Math.max(best, k.points);
-            return best;
+            int top = 0;
+            for (ApiModels.Task k : g) if (k.completed) top = Math.max(top, pts(k));
+            sum += top;
         }
         return sum;
     }
@@ -85,15 +145,18 @@ public final class TileInfo
         if (t == null) return 0;
         if (t.completed) return 1;
         if (t.tasks == null || t.tasks.isEmpty()) return 0;
+        // a task with "OR" options is as far along as its best option
         double total = 0;
         double best = 0;
-        for (ApiModels.Task k : t.tasks)
+        List<List<ApiModels.Task>> groups = taskGroups(t);
+        for (List<ApiModels.Task> g : groups)
         {
-            double p = k.completed ? 1 : k.requiredQty <= 0 ? 0 : Math.min(1, (double) k.approvedQty / k.requiredQty);
+            double p = 0;
+            for (ApiModels.Task k : g) p = Math.max(p, k.completed ? 1 : k.requiredQty <= 0 ? 0 : Math.min(1, (double) k.approvedQty / k.requiredQty));
             total += p;
             best = Math.max(best, p);
         }
-        return "any".equals(t.completionMode) ? best : total / t.tasks.size();
+        return "any".equals(t.completionMode) ? best : total / groups.size();
     }
 
     public static State state(ApiModels.Tile t)
@@ -128,8 +191,20 @@ public final class TileInfo
         {
             if (!k.completed && k.requiredQty > 1) return Math.min(k.approvedQty, k.requiredQty) + "/" + k.requiredQty;
         }
+        // tasks, not options: a task with "OR" options counts once, done when any option is
+        List<List<ApiModels.Task>> groups = taskGroups(t);
         int done = 0;
-        for (ApiModels.Task k : t.tasks) if (k.completed) done++;
-        return t.tasks.size() > 1 ? done + "/" + t.tasks.size() + " tasks" : "";
+        for (List<ApiModels.Task> g : groups)
+        {
+            for (ApiModels.Task k : g)
+            {
+                if (k.completed)
+                {
+                    done++;
+                    break;
+                }
+            }
+        }
+        return groups.size() > 1 ? done + "/" + groups.size() + " tasks" : "";
     }
 }

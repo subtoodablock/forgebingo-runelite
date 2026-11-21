@@ -62,6 +62,41 @@ public class TileInfoTest
         assertEquals(5, TileInfo.worth(any));
     }
 
+    private static ApiModels.Task option(int group, int points, boolean done)
+    {
+        ApiModels.Task k = task(1, done ? 1 : 0, points);
+        k.group = group;
+        return k;
+    }
+
+    @Test
+    public void orOptionsScoreOnlyTheFinishedOptionLikeTheServer()
+    {
+        // Task 1: Dragon spear (2) OR Zulrah drop (4); Task 2: Bandos drop (3)
+        ApiModels.Tile t = tile("Mixed", option(1, 2, false), option(1, 4, false), task(1, 0, 3));
+        t.completionMode = "all";
+        assertEquals(7, TileInfo.worth(t));                       // best option + the other task, not 2 + 4 + 3
+        assertEquals(0, TileInfo.earned(t));
+        t.tasks.get(0).completed = true;                          // the spear: only its 2 points
+        t.tasks.get(0).approvedQty = 1;
+        assertEquals(2, TileInfo.earned(t));
+        assertEquals(0.5, TileInfo.progress(t), 1e-9);            // 1 of 2 tasks, not 1 of 3 options
+        assertEquals("1/2 tasks", TileInfo.countText(t));
+        t.tasks.get(1).completed = true;                          // both options done: counts once, the best
+        assertEquals(4, TileInfo.earned(t));
+        t.tasks.get(2).completed = true;                          // the "and" task scores on its own
+        assertEquals(7, TileInfo.earned(t));
+        assertEquals(2, TileInfo.taskGroups(t).size());
+    }
+
+    @Test
+    public void andTasksScoreAsSoonAsEachIsDone()
+    {
+        ApiModels.Tile t = tile("Two", task(1, 1, 3), task(1, 0, 5));
+        assertEquals(8, TileInfo.worth(t));
+        assertEquals(3, TileInfo.earned(t));
+    }
+
     @Test
     public void needsChangesOnlyWhileNothingIsWaiting()
     {
