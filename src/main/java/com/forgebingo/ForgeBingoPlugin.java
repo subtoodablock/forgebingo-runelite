@@ -588,6 +588,36 @@ public class ForgeBingoPlugin extends Plugin
         });
     }
 
+    // ---------- "Rejected" lines in the side panel: which ones this player has seen and dismissed, per team board ----------
+
+    private static String rejectedKey(String teamBoardId)
+    {
+        if (teamBoardId == null || teamBoardId.isEmpty() || teamBoardId.length() > 64) return null;
+        for (int i = 0; i < teamBoardId.length(); i++)
+        {
+            char c = teamBoardId.charAt(i);
+            if (!(Character.isLetterOrDigit(c) || c == '-' || c == '_')) return null;
+        }
+        return "rejected." + teamBoardId;
+    }
+
+    /** What RejectedNotices.Log saved for this board ("" when nothing yet). */
+    String rejectedMemory(String teamBoardId)
+    {
+        String key = rejectedKey(teamBoardId);
+        if (key == null || configManager == null) return "";
+        String v = configManager.getConfiguration(ForgeBingoConfig.GROUP, key);
+        return v == null ? "" : v;
+    }
+
+    void setRejectedMemory(String teamBoardId, String value)
+    {
+        String key = rejectedKey(teamBoardId);
+        if (key == null || configManager == null) return;
+        if (value == null || value.isEmpty()) configManager.unsetConfiguration(ForgeBingoConfig.GROUP, key);
+        else configManager.setConfiguration(ForgeBingoConfig.GROUP, key, value);
+    }
+
     boolean panelHeaderCollapsed()
     {
         return config.panelHeaderCollapsed();

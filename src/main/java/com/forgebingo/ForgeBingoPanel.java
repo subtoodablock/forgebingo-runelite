@@ -4,6 +4,7 @@ import com.forgebingo.core.ApiClient;
 import com.forgebingo.core.ApiModels;
 import com.forgebingo.core.ConnectionStatus;
 import com.forgebingo.core.ItemSlots;
+import com.forgebingo.core.RejectedNotices;
 import com.forgebingo.core.TileIcons;
 import com.forgebingo.core.TileInfo;
 import java.awt.BorderLayout;
@@ -211,6 +212,10 @@ class ForgeBingoPanel extends PluginPanel
         // --- header card: name, connection, account, send queue
         // collapsible (owner, 2026-11-11): the title row (and the connection line) always shows; tap it to hide or
         // show the account, queue and "Tracking drops as ..." details. Remembered between sessions.
+        // proof a reviewer sent back, first thing in the panel (filled by setBoard)
+        rejected.setVisible(false);
+        add(content, rejected);
+
         JPanel head = card(null);
         JPanel titleRow = new JPanel(new BorderLayout(6, 0));
         titleRow.setOpaque(false);
@@ -543,6 +548,113 @@ class ForgeBingoPanel extends PluginPanel
         hide.start();
     }
 
+    // ------------------------------------------------------------------ proof sent back
+
+    /** "Rejected: tile - reason" lines at the very top of the panel (see RejectedNotices for what counts as recent) */
+    private final JPanel rejected = column();
+    private final RejectedNotices.Log rejectedLog = new RejectedNotices.Log();
+    /** the team board the log above belongs to (each board keeps its own in the player's settings) */
+    private String rejectedBoardId;
+
+    private void renderRejected(ApiModels.BoardResponse board)
+    {
+        String id = board.teamBoardId;
+        long now = System.currentTimeMillis();
+        List<RejectedNotices.Notice> show = Collections.emptyList();
+        if (id != null && !id.isEmpty())
+        {
+            if (!id.equals(rejectedBoardId))
+            {
+                rejectedLog.load(plugin.rejectedMemory(id));
+                rejectedBoardId = id;
+            }
+            if (rejectedLog.update(RejectedNotices.find(board.tiles), now)) plugin.setRejectedMemory(id, rejectedLog.save());
+            show = rejectedLog.visible(now);
+        }
+        rejected.removeAll();
+        for (int i = 0; i < show.size() && i < RejectedNotices.MAX_SHOWN; i++)
+        {
+            rejected.add(rejectedRow(board, show.get(i)));
+            rejected.add(gap(4));
+        }
+        String more = RejectedNotices.moreText(show.size());
+        if (!more.isEmpty())
+        {
+            JLabel l = muted(more + " sent back. Close one to see the next.");
+            rejected.add(left(l));
+            rejected.add(gap(4));
+        }
+        if (!show.isEmpty()) rejected.add(gap(2));
+        rejected.setVisible(!show.isEmpty());
+        rejected.revalidate();
+        rejected.repaint();
+    }
+
+    /** One rejected tile: a red-edged card like the other messages, the text opens the tile, the cross closes the line. */
+    private JPanel rejectedRow(ApiModels.BoardResponse board, RejectedNotices.Notice n)
+    {
+        PanelUi.Card row = new PanelUi.Card(ERROR).pad(6, 7, 6, 7);
+        row.setLayout(new BorderLayout(6, 0));
+        JLabel text = new JLabel("<html><body style='width:" + (CARD_TEXT - 40) + "px'><font color='#ff7070'>Rejected:</font> " + esc(n.title)
+            + (n.reason == null ? "" : "<br><font color='#a69d8f'>" + esc(n.reason) + "</font>") + "</body></html>");
+        text.setFont(smallFont());
+        text.setForeground(TEXT);
+        text.setToolTipText("Open this tile");
+        text.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        text.addMouseListener(new MouseAdapter()
+        {
+            @Override
+            public void mouseClicked(MouseEvent e)
+            {
+                for (ApiModels.Tile t : board.tiles)
+                {
+                    if (t != null && n.tileId.equals(t.id))
+                    {
+                        showTile(t);
+                        return;
+                    }
+                }
+            }
+        });
+        row.add(text, BorderLayout.CENTER);
+        JLabel close = new JLabel("x");
+        close.setFont(boldFont());
+        close.setForeground(MUTED);
+        close.setVerticalAlignment(SwingConstants.TOP);
+        close.setToolTipText("Dismiss. It comes back only if this tile's proof is sent back again.");
+        close.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        close.addMouseListener(new MouseAdapter()
+        {
+            @Override
+            public void mouseClicked(MouseEvent e)
+            {
+                dismissRejected(n.key);
+            }
+
+            @Override
+            public void mouseEntered(MouseEvent e)
+            {
+                close.setForeground(Color.WHITE);
+            }
+
+            @Override
+            public void mouseExited(MouseEvent e)
+            {
+                close.setForeground(MUTED);
+            }
+        });
+        row.add(close, BorderLayout.EAST);
+        return fullWidth(row, -1);
+    }
+
+    /** Closes one "Rejected" line and remembers it, so it stays away on the next poll and after a restart. */
+    void dismissRejected(String key)
+    {
+        if (!rejectedLog.dismiss(key)) return;
+        if (rejectedBoardId != null) plugin.setRejectedMemory(rejectedBoardId, rejectedLog.save());
+        if (lastBoard != null) renderRejected(lastBoard);
+    }
+
     /** Notices are shown in the game chat only (the sidebar list was removed); kept so callers stay simple. */
     void addNotice(String text)
     {
@@ -598,6 +710,7 @@ class ForgeBingoPanel extends PluginPanel
             reviewLabel.setToolTipText("Proof for " + (waitingTasks == 1 ? "this task" : "these tasks") + " is with the reviewers. It counts once they approve it.");
         }
         boardCard.setVisible(true);
+        renderRejected(board);
 
         tileLabels.clear();
         grid.removeAll();
@@ -869,7 +982,7 @@ class ForgeBingoPanel extends PluginPanel
         int doneTasks = 0;
         for (ApiModels.Task k : t.tasks) if (k.completed) doneTasks++;
         String reason = TileInfo.needsChangesReason(t);
-        return TileInfo.isSecret(t) && !t.completed ? "Secret tile: revealed later" : t.completed ? "Done" : reason != null ? "Needs changes: " + reason
+        return TileInfo.isSecret(t) && !t.completed ? "Secret tile" : t.completed ? "Done" : reason != null ? "Needs changes: " + reason
             : pending ? "Waiting for review" : t.tasks.isEmpty() ? "No tasks yet" : doneTasks + " of " + t.tasks.size() + " tasks done";
     }
 
@@ -933,7 +1046,11 @@ class ForgeBingoPanel extends PluginPanel
             l.setFont(l.getFont().deriveFont(java.awt.Font.BOLD, Math.max(10f, cell * 0.55f)));
         }
         StringBuilder tip = new StringBuilder("<html><b>").append(esc(st == TileInfo.State.SECRET ? "Secret tile" : t.title)).append("</b>");
-        if (st == TileInfo.State.SECRET) tip.append("<br>").append(esc(t.description == null || t.description.isEmpty() ? "Revealed later" : t.description));
+        if (st == TileInfo.State.SECRET)
+        {
+            // secret tiles never reveal their tasks: only the organizer's own message, when there is one
+            if (t.description != null && !t.description.isEmpty()) tip.append("<br>").append(esc(t.description));
+        }
         else tip.append(" (").append(BoardOverlay.points(TileInfo.worth(t))).append(")");
         String reason = TileInfo.needsChangesReason(t);
         if (reason != null) tip.append("<br><font color='#ff7070'>Needs changes: ").append(esc(reason)).append("</font>");
