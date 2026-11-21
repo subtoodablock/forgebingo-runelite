@@ -147,6 +147,8 @@ public class ForgeBingoPlugin extends Plugin
     private final Map<String, String> boardVersions = new ConcurrentHashMap<>();
     /** tileId -> title of the board on screen, to name tiles in notices. */
     private volatile Map<String, String> tileTitles = new ConcurrentHashMap<>();
+    /** hidden secret tiles on the board: chat never shows their amounts (owner, 2026-11-21: only the message shows) */
+    private volatile java.util.Set<String> hiddenTiles = java.util.Collections.emptySet();
     /** teamBoardId -> tile ids seen completed, so a refresh celebrates only what is new (and a blackout only once). */
     private final Map<String, Set<String>> celebrated = new ConcurrentHashMap<>();
     private final Set<String> blackoutShown = ConcurrentHashMap.newKeySet();
@@ -837,11 +839,17 @@ public class ForgeBingoPlugin extends Plugin
         ApiResult<ApiModels.LeaderboardResponse> lb = a.leaderboard(sel.teamBoardId);
         boardVersions.put(sel.teamBoardId, version);
         Map<String, String> titles = new ConcurrentHashMap<>();
+        java.util.Set<String> hidden = ConcurrentHashMap.newKeySet();
         for (ApiModels.Tile t : r.body.tiles)
         {
-            if (t.id != null && t.title != null) titles.put(t.id, t.title);
+            if (t.id == null) continue;
+            // a hidden secret tile goes by the name its organizer gave it ("Secret tile" when none), never "?"
+            String shown = TileInfo.shownTitle(t);
+            if (!shown.isEmpty()) titles.put(t.id, shown);
+            if (TileInfo.isSecret(t) && !t.completed) hidden.add(t.id);
         }
         tileTitles = titles;
+        hiddenTiles = hidden;
         indexBoardItems(r.body);
         currentBoard = r.body;
         celebrateChanges(sel.teamBoardId, r.body);
@@ -2257,7 +2265,9 @@ public class ForgeBingoPlugin extends Plugin
                         notice("Extra drop logged for " + tileName + " (already done)" + state, config.chatNotices());
                         continue;
                     }
-                    String progress = m.requiredQuantity > 0 ? " (" + Math.min(m.currentQuantity, m.requiredQuantity) + "/" + m.requiredQuantity + ")" : "";
+                    // a hidden secret tile's amount would hint at its task: only its name shows
+                    boolean hiddenTile = m.tileId != null && hiddenTiles.contains(m.tileId);
+                    String progress = !hiddenTile && m.requiredQuantity > 0 ? " (" + Math.min(m.currentQuantity, m.requiredQuantity) + "/" + m.requiredQuantity + ")" : "";
                     if (m.tileId != null && tileNowDone.contains(m.tileId))
                     {
                         if (announced.add("tile:" + m.tileId)) notice("Tile complete: " + tileName + state, config.chatNotices());
