@@ -95,6 +95,12 @@ public final class Sanitizer
         return Math.max(0, Math.min(v, 1_000_000_000));
     }
 
+    /** A tile's or task's points: 0 to 1000, 2 decimal places (0.25, 1.5, 3); anything unreadable is 0. */
+    private static double points(double v)
+    {
+        return Points.round(Math.min(v, 1000d));
+    }
+
     public static ApiModels.BoardsResponse boards(ApiModels.BoardsResponse r)
     {
         if (r == null)
@@ -144,7 +150,7 @@ public final class Sanitizer
         {
             t.title = str(t.title);
             t.description = str(t.description);
-            t.points = clamp(t.points);
+            t.points = points(t.points);
             t.row = Math.max(0, Math.min(t.row, 19));
             t.col = Math.max(0, Math.min(t.col, 19));
             if (t.iconUrl != null && !IconRef.isProxyPath(t.iconUrl))
@@ -159,7 +165,7 @@ public final class Sanitizer
             {
                 k.description = str(k.description);
                 k.rejectedReason = k.rejectedReason == null ? null : str(k.rejectedReason);
-                if (k.points != null) k.points = Math.max(0, Math.min(1000, k.points));
+                if (k.points != null) k.points = points(k.points);
                 if (k.group != null && (k.group < 1 || k.group > 20)) k.group = null;
                 k.requiredQty = clamp(k.requiredQty);
                 k.approvedQty = clamp(k.approvedQty);
@@ -211,7 +217,7 @@ public final class Sanitizer
         for (ApiModels.LeaderboardTeam t : r.teams)
         {
             t.teamName = str(t.teamName);
-            t.score = clamp(t.score);
+            t.score = Points.round(t.score);
         }
         return r;
     }

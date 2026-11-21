@@ -17,7 +17,7 @@ import okhttp3.ResponseBody;
 /**
  * The only class that knows the HTTP routes. Blocking: call from the plugin's
  * executor, never the client or EDT thread. Every request carries the key in
- * {@code X-API-Key} (plus {@code Accept} and {@code X-Plugin-Version}; JSON bodies are {@code Content-Type: application/json}) and only ever goes to the configured base URL.
+ * {@code X-API-Key} (plus {@code Accept}, {@code X-Plugin-Version} and {@code X-Plugin-Decimals}; JSON bodies are {@code Content-Type: application/json}) and only ever goes to the configured base URL.
  */
 public final class ApiClient
 {
@@ -293,6 +293,8 @@ public final class ApiClient
             .header("X-API-Key", apiKey.get().trim())
             .header("Accept", "application/json")
             .header("X-Plugin-Version", pluginVersion)
+            // this plugin reads decimal points (0.25); without it the server sends whole numbers, as older plugins need
+            .header("X-Plugin-Decimals", "1")
             .header("User-Agent", "ForgeBingo-RuneLite/" + pluginVersion);
     }
 

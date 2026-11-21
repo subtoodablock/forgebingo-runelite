@@ -118,8 +118,8 @@ public final class ApiModels
         public int approvedQty;
         public int pendingQty;
         public boolean completed;
-        /** points this task is worth (null from servers before per-task points) */
-        public Integer points;
+        /** points this task is worth, decimals allowed, e.g. 0.25 (null from servers before per-task points) */
+        public Double points;
         /** "OR" options: tasks of one tile sharing this number are options of one task, any one finishes it and
          *  only the finished one scores (servers from 2026-11-16; null = a task on its own) */
         public Integer group;
@@ -158,7 +158,8 @@ public final class ApiModels
         public String title;
         public String description;
         public String color;
-        public int points;
+        /** decimals allowed, e.g. 0.25 */
+        public double points;
         public Integer iconItemId;
         public boolean hasIcon;
         /** Relative to the API base URL: /v1/icons/tiles/&lt;id&gt;, or null. */
@@ -229,7 +230,8 @@ public final class ApiModels
         public String teamId;
         public String teamName;
         public String color;
-        public int score;
+        /** decimals allowed, e.g. 12.75 */
+        public double score;
         public int tilesCompleted;
         public int rank;
         public String reachedAt;

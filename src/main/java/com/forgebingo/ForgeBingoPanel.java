@@ -739,10 +739,11 @@ class ForgeBingoPanel extends PluginPanel
         {
             // part-way through, show what the finished tasks already scored (each task scores as soon as it is done;
             // a task with "OR" options scores only the option the team finished)
-            int got = TileInfo.earned(t);
-            int max = TileInfo.worth(t);
-            JLabel pts = new JLabel(t.completed ? BoardOverlay.points(got > 0 ? got : max) : got > 0 ? got + " / " + BoardOverlay.points(max) : BoardOverlay.points(max));
-            if (!t.completed && got > 0) pts.setToolTipText(got + " scored so far: each finished task counts now; an OR task scores only the option you did");
+            double got = TileInfo.earned(t);
+            double max = TileInfo.worth(t);
+            String gotText = com.forgebingo.core.Points.text(got);
+            JLabel pts = new JLabel(t.completed ? BoardOverlay.points(got > 0 ? got : max) : got > 0 ? gotText + " / " + BoardOverlay.points(max) : BoardOverlay.points(max));
+            if (!t.completed && got > 0) pts.setToolTipText(gotText + " scored so far: each finished task counts now; an OR task scores only the option you did");
             pts.setFont(smallFont());
             pts.setForeground(GOLD);
             pts.setVerticalAlignment(SwingConstants.TOP);
