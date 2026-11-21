@@ -1628,9 +1628,10 @@ public class BoardOverlay extends Overlay
         return y;
     }
 
-    static String points(int n)
+    /** "1 pt", "0.25 pts", "3 pts": points can be decimals, shown with at most 2 places and no trailing zeros */
+    static String points(double n)
     {
-        return n + (n == 1 ? " pt" : " pts");
+        return com.forgebingo.core.Points.label(n);
     }
 
     /** Slight overshoot then settle, for the card pop. */

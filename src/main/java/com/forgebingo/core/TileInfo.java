@@ -70,9 +70,10 @@ public final class TileInfo
         return out;
     }
 
-    private static int pts(ApiModels.Task k)
+    /** a task's points in hundredths, so decimal points (0.1 + 0.2) add up exactly */
+    private static long pts(ApiModels.Task k)
     {
-        return k.points == null ? 0 : Math.max(0, k.points);
+        return k.points == null ? 0 : Points.cents(k.points);
     }
 
     private static boolean hasTaskPoints(ApiModels.Tile t)
@@ -86,20 +87,20 @@ public final class TileInfo
      * The most the tile can score, matching the server: every task adds its points, a task with "OR" options adds
      * its best option once, an older "any one" tile its best task (servers before task points: the tile's own points).
      */
-    public static int worth(ApiModels.Tile t)
+    public static double worth(ApiModels.Tile t)
     {
         if (t == null) return 0;
-        if (!hasTaskPoints(t)) return t.points;
-        int sum = 0;
-        int best = 0;
+        if (!hasTaskPoints(t)) return Points.round(t.points);
+        long sum = 0;
+        long best = 0;
         for (List<ApiModels.Task> g : taskGroups(t))
         {
-            int top = 0;
+            long top = 0;
             for (ApiModels.Task k : g) top = Math.max(top, pts(k));
             sum += top;
             best = Math.max(best, top);
         }
-        return "any".equals(t.completionMode) ? best : sum;
+        return Points.fromCents("any".equals(t.completionMode) ? best : sum);
     }
 
     /**
@@ -107,18 +108,18 @@ public final class TileInfo
      * done (the tile need not be complete); a task with "OR" options scores only its finished option (the best one if
      * more than one is done).
      */
-    public static int earned(ApiModels.Tile t)
+    public static double earned(ApiModels.Tile t)
     {
         if (t == null) return 0;
-        if (!hasTaskPoints(t)) return t.completed ? t.points : 0;
-        int sum = 0;
+        if (!hasTaskPoints(t)) return t.completed ? Points.round(t.points) : 0;
+        long sum = 0;
         for (List<ApiModels.Task> g : taskGroups(t))
         {
-            int top = 0;
+            long top = 0;
             for (ApiModels.Task k : g) if (k.completed) top = Math.max(top, pts(k));
             sum += top;
         }
-        return sum;
+        return Points.fromCents(sum);
     }
 
     /** The newest proof on one of its unfinished tasks was sent back. Returns the reason, or null. */
@@ -179,7 +180,7 @@ public final class TileInfo
             if (t == null || t.completed || isSecret(t) || t.tasks == null || t.tasks.isEmpty()) continue;
             open.add(t);
         }
-        open.sort(Comparator.comparingDouble((ApiModels.Tile t) -> -progress(t)).thenComparingInt(t -> -worth(t)));
+        open.sort(Comparator.comparingDouble((ApiModels.Tile t) -> -progress(t)).thenComparingDouble(t -> -worth(t)));
         return open.subList(0, Math.min(n, open.size()));
     }
 

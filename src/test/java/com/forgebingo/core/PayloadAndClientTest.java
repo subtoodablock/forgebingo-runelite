@@ -197,6 +197,37 @@ public class PayloadAndClientTest
     }
 
     @Test
+    public void decimalPointsAreReadAndAskedFor() throws Exception
+    {
+        // the server sends numeric values: 0.25, 1.50, 3.00, and whole numbers as before
+        server.enqueue(new MockResponse().setBody("{\"teamBoardId\":\"tb1\",\"teamId\":\"tb1\",\"teamName\":\"Wolves\","
+            + "\"event\":{\"id\":\"e1\",\"name\":\"Forge\",\"status\":\"live\",\"active\":true},"
+            + "\"board\":{\"id\":\"b\",\"title\":\"B\",\"size\":3},"
+            + "\"tiles\":[{\"id\":\"t1\",\"row\":0,\"col\":0,\"title\":\"Free\",\"points\":0.25,\"completionMode\":\"all\",\"completed\":true,\"tasks\":[]},"
+            + "{\"id\":\"t2\",\"row\":0,\"col\":1,\"title\":\"Dec\",\"points\":1.00,\"completionMode\":\"all\",\"completed\":false,"
+            + "\"tasks\":[{\"id\":\"a\",\"description\":\"a\",\"requiredQty\":1,\"approvedQty\":1,\"completed\":true,\"points\":0.10},"
+            + "{\"id\":\"b\",\"description\":\"b\",\"requiredQty\":1,\"approvedQty\":1,\"completed\":true,\"points\":0.2},"
+            + "{\"id\":\"c\",\"description\":\"c\",\"requiredQty\":1,\"approvedQty\":0,\"completed\":false,\"points\":3.00},"
+            + "{\"id\":\"d\",\"description\":\"d\",\"requiredQty\":1,\"approvedQty\":0,\"completed\":false,\"points\":5000.129}]}],\"updatedAt\":\"u\"}"));
+        server.enqueue(new MockResponse().setBody("{\"teams\":[{\"teamId\":\"t\",\"teamName\":\"Wolves\",\"score\":12.75,\"tilesCompleted\":2,\"rank\":1},"
+            + "{\"teamId\":\"u\",\"teamName\":\"Bears\",\"score\":3.00,\"tilesCompleted\":1,\"rank\":2}]}"));
+        ApiModels.BoardResponse b = client.board("tb1").body;
+        assertEquals(0.25, b.tiles.get(0).points, 0);
+        assertEquals(0.25, TileInfo.worth(b.tiles.get(0)), 0);       // a free space scores its own points
+        ApiModels.Tile dec = b.tiles.get(1);
+        assertEquals(0.1, dec.tasks.get(0).points, 0);
+        assertEquals(3, dec.tasks.get(2).points, 0);
+        assertEquals(1000, dec.tasks.get(3).points, 0);              // never more than 1000
+        assertEquals(0.3, TileInfo.earned(dec), 0);                  // 0.1 + 0.2 is exactly 0.3
+        assertEquals(1003.3, TileInfo.worth(dec), 0);
+        ApiModels.LeaderboardResponse lb = client.leaderboard("tb1").body;
+        assertEquals(12.75, lb.teams.get(0).score, 0);
+        assertEquals(3, lb.teams.get(1).score, 0);
+        assertEquals("1", server.takeRequest().getHeader("X-Plugin-Decimals"));
+        assertEquals("1", server.takeRequest().getHeader("X-Plugin-Decimals"));
+    }
+
+    @Test
     public void proofUploadIsMultipartWithSubmissionIds() throws Exception
     {
         server.enqueue(new MockResponse().setResponseCode(201)
