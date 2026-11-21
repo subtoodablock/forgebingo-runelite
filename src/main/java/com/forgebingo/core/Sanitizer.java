@@ -160,6 +160,7 @@ public final class Sanitizer
                 k.description = str(k.description);
                 k.rejectedReason = k.rejectedReason == null ? null : str(k.rejectedReason);
                 if (k.points != null) k.points = Math.max(0, Math.min(1000, k.points));
+                if (k.group != null && (k.group < 1 || k.group > 20)) k.group = null;
                 k.requiredQty = clamp(k.requiredQty);
                 k.approvedQty = clamp(k.approvedQty);
                 k.pendingQty = clamp(k.pendingQty);

@@ -831,7 +831,12 @@ class ForgeBingoPanel extends PluginPanel
         stateRow.add(cardText(state, stateTextColour(t), CARD_TEXT - 40), BorderLayout.CENTER);
         if (!secret)
         {
-            JLabel pts = new PanelUi.CrispLabel(BoardOverlay.points(TileInfo.worth(t)));
+            // part-way through, show what the finished tasks already scored (each task scores as soon as it is done;
+            // a task with "OR" options scores only the option the team finished)
+            int got = TileInfo.earned(t);
+            int max = TileInfo.worth(t);
+            JLabel pts = new PanelUi.CrispLabel(t.completed ? BoardOverlay.points(got > 0 ? got : max) : got > 0 ? got + " / " + BoardOverlay.points(max) : BoardOverlay.points(max));
+            if (!t.completed && got > 0) pts.setToolTipText(got + " scored so far: each finished task counts now; an OR task scores only the option you did");
             pts.setFont(smallFont());
             pts.setForeground(GOLD);
             pts.setVerticalAlignment(SwingConstants.TOP);
@@ -869,20 +874,40 @@ class ForgeBingoPanel extends PluginPanel
         // a tile that completes with any one of its tasks shows them as Option 1 / OR / Option 2 (owner, 2026-11-15),
         // each with its own Send screenshot, so every proof lands on the option it is for
         boolean options = "any".equals(t.completionMode) && t.tasks.size() > 1;
+        // an "all" tile can hold tasks with up to 3 "OR" options (owner, 2026-11-16): Task 1, option OR option;
+        // only the option the team finishes scores
+        java.util.List<java.util.List<ApiModels.Task>> groups = TileInfo.taskGroups(t);
+        boolean grouped = !options && groups.size() < t.tasks.size();
         int n = 0;
-        for (ApiModels.Task k : t.tasks)
+        int gi = 0;
+        for (java.util.List<ApiModels.Task> g : groups)
         {
-            counted += k.approvedQty;
-            waiting += k.pendingQty;
-            n++;
-            if (options)
+            gi++;
+            if (grouped)
             {
-                if (n > 1) detail.add(left(cardText("OR", PanelUi.GOLD)));
-                detail.add(left(smallCaps("Option " + n)));
+                detail.add(left(smallCaps("Task " + gi + (g.size() > 1 ? ": any one option" : ""))));
                 detail.add(gap(2));
             }
-            detail.add(taskBox(t, k, secret, opened));
-            detail.add(gap(6));
+            int oi = 0;
+            for (ApiModels.Task k : g)
+            {
+                counted += k.approvedQty;
+                waiting += k.pendingQty;
+                n++;
+                oi++;
+                if (options)
+                {
+                    if (n > 1) detail.add(left(cardText("OR", PanelUi.GOLD)));
+                    detail.add(left(smallCaps("Option " + n)));
+                    detail.add(gap(2));
+                }
+                else if (grouped && oi > 1)
+                {
+                    detail.add(left(cardText("OR", PanelUi.GOLD)));
+                }
+                detail.add(taskBox(t, k, secret, opened));
+                detail.add(gap(6));
+            }
         }
 
         // PROOF: what this team has sent for the tile
