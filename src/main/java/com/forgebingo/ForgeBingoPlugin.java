@@ -1548,14 +1548,14 @@ public class ForgeBingoPlugin extends Plugin
         GameEvent ev = base(GameEvent.LEVEL);
         ev.skill = skill.getName().toLowerCase(Locale.ROOT);
         ev.level = level;
-        submit(ev, false);
+        submit(ev, true); // a level that counts for a tile gets its picture: the level-up message (owner, 2026-11-22)
         int total = client.getTotalLevel();
         if (total > 0)
         {
             GameEvent overall = base(GameEvent.LEVEL);
             overall.skill = "overall";
             overall.level = total;
-            submit(overall, false);
+            submit(overall, true);
         }
     }
 
