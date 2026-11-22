@@ -251,6 +251,7 @@ public class ForgeBingoPlugin extends Plugin
             clientToolbar.addNavigation(navigationButton);
             panel.setQueueSize(queue.size(), null);
         });
+        effects.hideWhile = this::takingProof;
         overlayManager.add(effects);
         overlayManager.add(boardOverlay);
         boardInput = new BoardOverlayInput(client, boardOverlay, config);
@@ -1195,7 +1196,7 @@ public class ForgeBingoPlugin extends Plugin
         // a moment later, so the chat line (and the purple light where the raid shows one) is drawn
         executor.schedule(() -> {
             if (!running) return;
-            drawManager.requestNextFrameListener(image -> {
+            proofFrame(image -> {
                 if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen()) return;
                 executor.execute(() -> {
                     try
@@ -1804,6 +1805,12 @@ public class ForgeBingoPlugin extends Plugin
         {
             for (GameEvent.Item it : ev.items) if (b.hiddenItemIds.contains(it.itemId)) return true;
         }
+        // a secret tile may ask for a kill count, any pet or any clue (no item ids to go on): with one on the board,
+        // those events always get their picture; it is only sent when the server says the event counted (2026-11-22)
+        if (GameEvent.KC.equals(ev.sourceType) || GameEvent.PET.equals(ev.sourceType) || GameEvent.CLUE.equals(ev.sourceType))
+        {
+            for (ApiModels.Tile t : b.tiles) if (t != null && TileInfo.isSecret(t)) return true;
+        }
         return false;
     }
 
@@ -1878,7 +1885,7 @@ public class ForgeBingoPlugin extends Plugin
     {
         String key = eventId + "#" + index;
         if (!running || !screenshots.containsKey(eventId)) { shotsInProgress.remove(key); return; }
-        drawManager.requestNextFrameListener(image -> {
+        proofFrame(image -> {
             if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen())
             {
                 shotsInProgress.remove(key);
@@ -1919,6 +1926,40 @@ public class ForgeBingoPlugin extends Plugin
     /** Event ids whose screenshot is being taken right now (requested, not yet stored or given up). */
     private final java.util.Set<String> shotsInProgress = ConcurrentHashMap.newKeySet();
 
+    /** proof frames waiting to be taken; our board and celebrations are not drawn meanwhile */
+    private final java.util.concurrent.atomic.AtomicInteger proofFramesPending = new java.util.concurrent.atomic.AtomicInteger();
+    private volatile long proofHideSince;
+    /** wait this long after hiding our overlays, so the captured frame was drawn without them (one frame at 12+ fps) */
+    static final long PROOF_HIDE_LEAD_MS = 80;
+    /** never hide our overlays longer than this, whatever happens to a frame request */
+    static final long PROOF_HIDE_MAX_MS = 2000;
+
+    /** True while a proof screenshot is being taken (owner, 2026-11-22: the board and banners covered the loot). */
+    boolean takingProof()
+    {
+        return proofFramesPending.get() > 0 && System.currentTimeMillis() - proofHideSince < PROOF_HIDE_MAX_MS;
+    }
+
+    /**
+     * Takes the next game frame for a proof screenshot, with our own board overlay and celebration effects hidden:
+     * they are switched off first and the frame is requested a moment later, so the captured frame never has them.
+     */
+    private void proofFrame(java.util.function.Consumer<java.awt.Image> then)
+    {
+        proofHideSince = System.currentTimeMillis();
+        proofFramesPending.incrementAndGet();
+        executor.schedule(() -> drawManager.requestNextFrameListener(image -> {
+            try
+            {
+                then.accept(image);
+            }
+            finally
+            {
+                proofFramesPending.updateAndGet(n -> Math.max(0, n - 1));
+            }
+        }), PROOF_HIDE_LEAD_MS, TimeUnit.MILLISECONDS);
+    }
+
     /**
      * "Send screenshot as proof" in the side panel: takes the next game frame (stamped like drop proof) and sends it
      * as a new proof for that task, waiting for review like proof added on the website. Any thread.
@@ -1955,7 +1996,7 @@ public class ForgeBingoPlugin extends Plugin
             return;
         }
         lastProofShotAt = System.currentTimeMillis();
-        drawManager.requestNextFrameListener(image -> {
+        proofFrame(image -> {
             // checked again as the frame is captured: a logout or the bank PIN may have come up since the click
             if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen())
             {
@@ -2079,7 +2120,10 @@ public class ForgeBingoPlugin extends Plugin
      */
     private void maybeUploadScreenshot(GameEvent event, ApiModels.EventResult result, int attempt)
     {
-        if (result == null || !result.isMatched() || result.duplicate)
+        // a duplicate is the server's stored answer to a send whose reply was lost (the queue sent it again): it
+        // still names the entries this drop made, so the picture still goes to them. It is uploaded once at most:
+        // the first answer to arrive takes the picture out of the map.
+        if (result == null || !result.isMatched())
         {
             screenshots.remove(event.id);
             return;
@@ -2329,6 +2373,12 @@ public class ForgeBingoPlugin extends Plugin
             {
                 // the chest's own loot counted for nothing, but the raid did: its pictures are that raid's proof
                 maybeUploadScreenshot(event, proofFor);
+            }
+            else if (result != null && result.duplicate && result.isMatched())
+            {
+                // the first send counted but its answer was lost: no second "Counted" message, but the picture
+                // still goes up, or those entries would sit there without proof (2026-11-22)
+                maybeUploadScreenshot(event, result);
             }
             else
             {

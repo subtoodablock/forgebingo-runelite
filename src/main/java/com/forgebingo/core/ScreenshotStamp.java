@@ -14,6 +14,8 @@ public final class ScreenshotStamp
 {
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final DateTimeFormatter OFFSET = DateTimeFormatter.ofPattern("xxx");
+    /** the stamp box's darkness, 0-255: about 40%, so the game shows through */
+    static final int BOX_ALPHA = 100;
 
     private ScreenshotStamp()
     {
@@ -67,12 +69,17 @@ public final class ScreenshotStamp
             int lineH = fm.getHeight();
             int boxW = Math.min(src.getWidth(), w + pad * 2);
             int boxH = Math.min(src.getHeight(), lineH * lines.length + pad * 2);
-            g.setColor(new Color(0, 0, 0, 190));
+            // light enough to see the game behind it (owner, 2026-11-22: the old 75% black box hid what was under it);
+            // the text keeps a dark outline so it still reads on bright scenery
+            g.setColor(new Color(0, 0, 0, BOX_ALPHA));
             g.fillRect(0, 0, boxW, boxH);
-            g.setColor(Color.WHITE);
             int y = pad + fm.getAscent();
+            Color outline = new Color(0, 0, 0, 220);
             for (String l : lines)
             {
+                g.setColor(outline);
+                for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) if (dx != 0 || dy != 0) g.drawString(l, pad + dx, y + dy);
+                g.setColor(Color.WHITE);
                 g.drawString(l, pad, y);
                 y += lineH;
             }

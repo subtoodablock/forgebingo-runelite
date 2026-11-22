@@ -103,9 +103,13 @@ public class EffectsOverlay extends Overlay
         current = null;
     }
 
+    /** true while a proof screenshot is being taken: celebrations stay out of the picture (set by the plugin) */
+    volatile java.util.function.BooleanSupplier hideWhile = () -> false;
+
     @Override
     public Dimension render(Graphics2D g)
     {
+        if (hideWhile.getAsBoolean()) return null;
         Effect e;
         long now = System.currentTimeMillis();
         synchronized (this)
