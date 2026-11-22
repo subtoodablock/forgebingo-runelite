@@ -40,7 +40,7 @@ public final class ScreenshotStamp
     public static BufferedImage stamp(BufferedImage src, String keyword, ZonedDateTime when, String player, String tile)
     {
         java.util.List<String> lines = new java.util.ArrayList<>();
-        if (tile != null && !tile.trim().isEmpty()) lines.add(clip(tile.trim(), 48));
+        if (tile != null && !tile.trim().isEmpty()) lines.add(clip(tile.trim(), 64));
         if (player != null && !player.trim().isEmpty()) lines.add(clip(player.trim(), 24));
         if (keyword != null && !keyword.trim().isEmpty()) lines.add("Code: " + clip(keyword.trim(), 40));
         lines.add(timeText(when));

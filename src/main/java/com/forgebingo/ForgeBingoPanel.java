@@ -1218,7 +1218,9 @@ class ForgeBingoPanel extends PluginPanel
                 String what = k.description == null || k.description.isEmpty() ? TileInfo.shownTitle(t) : k.description;
                 // sent to the board this card is from (not whatever is selected when it's clicked), stamped with its tile
                 String boardId = lastBoard == null ? null : lastBoard.teamBoardId;
-                String tileName = TileInfo.shownTitle(t);
+                // a tile with several tasks or "or" options stamps which one the picture is for (owner, 2026-11-22)
+                String tileName = t.tasks != null && t.tasks.size() > 1 && !what.equals(TileInfo.shownTitle(t))
+                    ? TileInfo.shownTitle(t) + ": " + what : TileInfo.shownTitle(t);
                 shot.addActionListener(e -> plugin.sendScreenshotProof(boardId, k.id, what, tileName));
                 box.add(gap(5));
                 box.add(fullWidth(shot, 24));
