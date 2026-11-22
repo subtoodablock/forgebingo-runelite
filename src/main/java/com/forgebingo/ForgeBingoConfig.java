@@ -91,11 +91,14 @@ public interface ForgeBingoConfig extends Config
         return true;
     }
 
-    @ConfigItem(keyName = "sendLevels", name = "Level-ups", description = "Report skill level-ups",
-        section = events, position = 5)
+    /**
+     * Level-ups as bingo progress: hidden and off for now (owner, 2026-11-22: not a good way to track). Built and kept
+     * (with its proof picture); a new key so players who had the old "Level-ups" box ticked stop sending too.
+     */
+    @ConfigItem(keyName = "sendLevelUps", name = "", description = "", hidden = true)
     default boolean sendLevels()
     {
-        return true;
+        return false;
     }
 
     // "Screenshot on matched drop" was removed (owner, 2026-11-12): a matched drop always sends a game-window
