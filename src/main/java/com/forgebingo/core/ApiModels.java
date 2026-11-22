@@ -187,8 +187,6 @@ public final class ApiModels
         public String endsAt;
         public boolean active;
         public String keyword;
-        /** the bingo's rules as plain text with line breaks, as on the site's Rules tab (servers from 2026-11-22; null before) */
-        public String rules;
     }
 
     public static final class Bonuses

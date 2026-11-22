@@ -210,9 +210,6 @@ class ForgeBingoPanel extends PluginPanel
     private final JLabel queueLabel = new PanelUi.CrispLabel(" ");
     private final JLabel teamLabel = new PanelUi.CrispLabel(" ");
     private final JLabel eventLabel = new PanelUi.CrispLabel(" ");
-    /** opens the bingo's rules (owner, 2026-11-22); shown only when the organizer wrote some */
-    private final JButton rulesButton = button("Read the rules", "The rules your organizer wrote for this bingo (the same as the website's Rules tab)");
-    private String rulesText;
     private final PanelUi.GoldBar tilesBar = new PanelUi.GoldBar();
     private final PanelUi.Card boardCard = new PanelUi.Card(null);
     private final PanelUi.StatusDot statusDot = new PanelUi.StatusDot();
@@ -365,9 +362,6 @@ class ForgeBingoPanel extends PluginPanel
         tilesBar.setForeground(PanelUi.GOLD_DARK);
         boardCard.add(left(teamLabel));
         boardCard.add(left(eventLabel));
-        rulesButton.setVisible(false);
-        rulesButton.addActionListener(e -> showRules());
-        boardCard.add(left(rulesButton));
         activityLabel.setFont(smallFont());
         activityLabel.setForeground(GOOD);
         activityLabel.setVisible(false);
@@ -784,8 +778,6 @@ class ForgeBingoPanel extends PluginPanel
         String ev = board.event != null && board.event.name != null ? board.event.name : "";
         if (board.event != null && !board.event.active) ev += (ev.isEmpty() ? "" : " ") + "(not running)";
         eventLabel.setText(ev.isEmpty() ? " " : wrapHtml(ev, CARD_TEXT));
-        rulesText = board.event == null ? null : board.event.rules;
-        rulesButton.setVisible(rulesText != null && !rulesText.isEmpty());
 
         int size = board.size();
         // squares shrink to fit the sidebar on big boards (a 10x10 board would otherwise cut its icons off)
@@ -1423,22 +1415,6 @@ class ForgeBingoPanel extends PluginPanel
         PanelUi.SectionHeader h = new PanelUi.SectionHeader(text);
         h.setFont(capsFont());
         return fullWidth(h, -1);
-    }
-
-    /** The rules in a small window: plain text (never HTML), wrapped, scrollable, read only. */
-    private void showRules()
-    {
-        if (rulesText == null || rulesText.isEmpty()) return;
-        javax.swing.JTextArea area = new javax.swing.JTextArea(rulesText);
-        area.setEditable(false);
-        area.setLineWrap(true);
-        area.setWrapStyleWord(true);
-        area.setFont(smallFont());
-        area.setCaretPosition(0);
-        javax.swing.JScrollPane scroll = new javax.swing.JScrollPane(area);
-        scroll.setPreferredSize(new java.awt.Dimension(320, 380));
-        String title = lastBoard != null && lastBoard.event != null && lastBoard.event.name != null ? lastBoard.event.name + ": rules" : "Bingo rules";
-        javax.swing.JOptionPane.showMessageDialog(this, scroll, title, javax.swing.JOptionPane.PLAIN_MESSAGE);
     }
 
     private static JButton button(String text, String tip)

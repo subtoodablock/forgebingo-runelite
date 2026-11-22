@@ -32,35 +32,6 @@ public final class Sanitizer
         return sb.toString();
     }
 
-    /** Longest rules text kept (the site allows 5000 characters). */
-    public static final int MAX_RULES = 5000;
-
-    /**
-     * The bingo's rules: plain text that keeps its line breaks (at most two blank lines in a row), every other control
-     * character dropped, trimmed and capped. Empty or missing rules give null (no Rules button).
-     */
-    public static String rules(String s)
-    {
-        if (s == null) return null;
-        StringBuilder sb = new StringBuilder(Math.min(s.length(), MAX_RULES));
-        int newlines = 0;
-        for (int i = 0; i < s.length() && sb.length() < MAX_RULES; i++)
-        {
-            char c = s.charAt(i);
-            if (c == '\r') continue;
-            if (c == '\n')
-            {
-                if (++newlines <= 2) sb.append('\n');
-                continue;
-            }
-            if (Character.isISOControl(c)) c = ' ';
-            newlines = 0;
-            sb.append(c);
-        }
-        String out = sb.toString().trim();
-        return out.isEmpty() ? null : out;
-    }
-
     private static final java.util.regex.Pattern RSN = java.util.regex.Pattern.compile("^[A-Za-z0-9 _-]{1,12}$");
 
     /** RuneScape names use non-breaking spaces in some client APIs; the server wants plain spaces. */
@@ -170,7 +141,6 @@ public final class Sanitizer
         {
             String kw = str(b.event.keyword);
             b.event.keyword = kw == null ? null : kw.trim().substring(0, Math.min(kw.trim().length(), 40));
-            b.event.rules = rules(b.event.rules);
         }
         b.tiles = cap(b.tiles, MAX_TILES);
         b.tiles.removeIf(t -> t == null);
