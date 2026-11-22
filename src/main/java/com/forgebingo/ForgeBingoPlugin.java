@@ -1256,7 +1256,9 @@ public class ForgeBingoPlugin extends Plugin
             {
                 GameEvent ev = base(GameEvent.COLLECTION_LOG);
                 ev.addItem(itemId, 1);
-                submit(ev, false);
+                // a new slot that counts for a tile gets its picture: the "New item added to your collection log"
+                // line in the chat (owner, 2026-11-22)
+                submit(ev, true);
             }
             petDetector.onCollectionLog(name, tick).ifPresent(this::reportPet);
         });
