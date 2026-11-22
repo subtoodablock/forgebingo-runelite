@@ -441,6 +441,8 @@ public class BoardOverlay extends Overlay
     @Override
     public Dimension render(Graphics2D g)
     {
+        // proof screenshots show the game, not our board over the loot (owner, 2026-11-22)
+        if (plugin.takingProof()) return null;
         long now = clock.getAsLong();
         boolean anim = config.boardOverlayAnimations();
         boolean isOpen = open;
