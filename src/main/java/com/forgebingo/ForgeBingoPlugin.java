@@ -1121,6 +1121,46 @@ public class ForgeBingoPlugin extends Plugin
         {
             groundGuard.onDropClicked(itemManager.canonicalize(e.getItemId()), client.getTickCount());
         }
+        // Perdu sells lost untradeables back for coins: what he hands over is the player's own, never a reward
+        String target = e.getMenuTarget();
+        if (target != null && net.runelite.client.util.Text.removeTags(target).toLowerCase(Locale.ROOT).startsWith("perdu"))
+        {
+            buyBackUntilTick = client.getTickCount() + BUY_BACK_TICKS;
+        }
+    }
+
+    /** how long after talking to Perdu nothing counts (his dialogue can be left open a while): about two minutes */
+    private static final int BUY_BACK_TICKS = 200;
+    private int buyBackUntilTick = Integer.MIN_VALUE / 2;
+    /** Death's office (Death's Domain): everything handed over there is the player's own */
+    private static final int DEATHS_DOMAIN_REGION = 12633;
+
+    /**
+     * The player is getting items back after a death: a gravestone or a boss's item-retrieval service is open, they
+     * are in Death's office or at Death's coffer, or they are dealing with Perdu. Whatever reaches the backpack now
+     * is their own (owner, 2026-11-23), whenever and wherever the death was (another device, the plugin switched off).
+     */
+    private boolean reclaimingAfterDeath(int tick)
+    {
+        if (tick <= buyBackUntilTick) return true;
+        for (int group : new int[] {net.runelite.api.gameval.InterfaceID.GRAVESTONE_RETRIEVAL,
+            net.runelite.api.gameval.InterfaceID.DEATH_OFFICE, net.runelite.api.gameval.InterfaceID.DEATH_COFFER,
+            net.runelite.api.gameval.InterfaceID.DEATHKEEP})
+        {
+            net.runelite.api.widgets.Widget w = client.getWidget(group, 0);
+            if (w != null && !w.isHidden()) return true;
+        }
+        Player me = client.getLocalPlayer();
+        if (me == null) return false;
+        net.runelite.api.Actor with = me.getInteracting();
+        if (with instanceof NPC && with.getName() != null && with.getName().equalsIgnoreCase("Perdu"))
+        {
+            buyBackUntilTick = Math.max(buyBackUntilTick, tick + 20);
+            return true;
+        }
+        if (me.getLocalLocation() == null) return false;
+        WorldPoint w = WorldPoint.fromLocalInstance(client, me.getLocalLocation());
+        return w != null && w.getRegionID() == DEATHS_DOMAIN_REGION;
     }
 
     /** A ground item that belongs to another player showing up: never part of a monster's loot for this player. */
@@ -1746,6 +1786,7 @@ public class ForgeBingoPlugin extends Plugin
         // items taken out of a Grand Exchange offer or the collection box were bought, not earned: a part-filled
         // offer does not always report a change when it is collected, so the open window itself is the signal
         if (grandExchangeOpen()) activityWatcher.onGrandExchange(tick);
+        if (reclaimingAfterDeath(tick)) activityWatcher.onReclaim(tick);
         // nothing is earned inside a player's house: gear taken out of its costume room and cape rack is the
         // player's own (those are not item containers, so nothing else tells it apart from a reward)
         List<ActivityWatcher.Drop> drops = activityWatcher.flush(tick, inPvp() || inHouse(), System.currentTimeMillis());

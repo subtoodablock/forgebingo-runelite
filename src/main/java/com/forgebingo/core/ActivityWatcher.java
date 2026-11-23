@@ -118,6 +118,17 @@ public final class ActivityWatcher
         tradeTicks.add(tick);
     }
 
+    /**
+     * The player is getting their own items back this tick: a gravestone, a boss's item-retrieval service, Death's
+     * office or coffer, or Perdu selling lost untradeables back (owner, 2026-11-23). Works without the death having
+     * been seen (it may have happened on another device). Counted like a trade: nothing reaching the backpack while
+     * this goes on, or just after, is a reward.
+     */
+    public void onReclaim(int tick)
+    {
+        tradeTicks.add(tick);
+    }
+
     private boolean nearTrade(int tick)
     {
         for (int t = tick - TRADE_WINDOW; t <= tick + 1; t++) if (tradeTicks.contains(t)) return true;

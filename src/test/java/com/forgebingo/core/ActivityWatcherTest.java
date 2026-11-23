@@ -215,6 +215,22 @@ public class ActivityWatcherTest
         assertTrue(w.flush(251, false).isEmpty());
     }
 
+    /** Bought back from Perdu, or taken from a gravestone or Death's office, with no death seen by this client. */
+    @Test
+    public void itemsReclaimedAfterADeathSeenElsewhereNeverCount()
+    {
+        ActivityWatcher w = new ActivityWatcher();
+        w.onReclaim(270);
+        w.onInventoryAdded(FIGHTER_TORSO, 1, 270);
+        w.onReclaim(271);
+        assertTrue(w.flush(271, false).isEmpty());
+        // a few ticks after the window closed it still does not count; a real reward later does
+        w.onInventoryAdded(FIGHTER_TORSO, 1, 274);
+        assertTrue(w.flush(275, false).isEmpty());
+        w.onInventoryAdded(FIGHTER_TORSO, 1, 300);
+        assertEquals(1, w.flush(301, false).size());
+    }
+
     /** Collected from the Grand Exchange while its window is open, even when the offer itself reports no change. */
     @Test
     public void collectingWithTheGrandExchangeOpenNeverCounts()
