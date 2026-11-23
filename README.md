@@ -1,7 +1,7 @@
 # ForgeBingo
 
-Clan bingo tracking for [ForgeBingo](https://forgebingo.vercel.app) events. Your drops, raid and clue loot, pets, kill
-counts and level-ups count for your team automatically, so you don't have to screenshot everything. Your team's board
+Clan bingo tracking for [ForgeBingo](https://forgebingo.vercel.app) events. Your drops, raid and clue loot, pets and kill
+counts count for your team automatically, so you don't have to screenshot everything. Your team's board
 shows in a sidebar panel and, with **Ctrl+B**, on top of the game.
 
 ## Getting started
@@ -21,7 +21,6 @@ shows in a sidebar panel and, with **Ctrl+B**, on top of the game.
 | Pickpocketing | only when the loot holds an item on your board |
 | Collection log slots, pets | the game's chat messages |
 | Kill and completion counts, clue completions | the game's chat messages |
-| Level-ups | skill level changes |
 | Reward-shop buys and opened containers (activity uniques) | new items in your backpack, except trades, bank withdrawals, Grand Exchange collects, ground pickups and anything in the Wilderness or on PvP worlds |
 
 The ForgeBingo server decides what counts for your board. Items picked up off the ground and loot from other players
@@ -33,8 +32,9 @@ This plugin sends data to the ForgeBingo server (a third-party service, not run 
 
 - your API key, RuneScape name and account hash (to link you to your team and stop name changes from being abused)
 - the drops, loot, collection log slots, pets, kill counts and levels listed above, with the time they happened
-- a screenshot of the game window as proof, only after the server confirms a drop counts for your team. This is
-  always sent and cannot be turned off, so event organizers can rely on it. The screenshot may show your chat box.
+- a screenshot of the game window as proof, only after the server confirms a drop counts for your team, while
+  **Screenshot on matched drop** is on (it is on by default; turn it off and no automatic screenshots are taken or
+  sent). The screenshot may show your chat box.
   Screenshots are never taken while the bank PIN keypad is open or while you are logged out, and while the ForgeBingo panel
   is open the sidebar is included too, unless you turn off **Include sidebar in screenshots** (other plugins' panels
   are never captured)
@@ -52,8 +52,8 @@ you don't walk where you click; it closes by itself when a monster attacks you (
 ## Settings
 
 - **Connection:** API base URL (leave as default), API key
-- **Events to send:** NPC drops; raids, chests and clues; collection log slots; pets; kill counts; level-ups
-- **Screenshots:** include sidebar in screenshots (on). A screenshot is always sent with a matched drop
+- **Events to send:** NPC drops; raids, chests and clues; collection log slots; pets; kill counts
+- **Screenshots:** screenshot on matched drop (on), include sidebar in screenshots (on)
 - **Theme effects:** Full, Calm (lighter on a slow PC) or Off (colours only). The theme and its effects can also be picked at the top of the side panel
 - **Theme:** Classic, Theatre of Blood, Chambers of Xeric, Tombs of Amascut, Barrows, Inferno or Skilling (all 72 pets). Each has its own
   colours, little creatures that wander over the side panel, and things that fall down it
