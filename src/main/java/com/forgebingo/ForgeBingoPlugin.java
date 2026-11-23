@@ -291,6 +291,9 @@ public class ForgeBingoPlugin extends Plugin
         if (closing != null) SwingUtilities.invokeLater(closing::dispose);
         panel = null;
         screenshots.clear();
+        frameJobs.clear();
+        shotsInProgress.clear();
+        proofFramesPending.set(0);
         levels.clear();
         dedup.clear();
         petDetector.reset();
@@ -1251,28 +1254,28 @@ public class ForgeBingoPlugin extends Plugin
         // the player turned automatic proof screenshots off: take none
         if (!config.screenshotOnMatch()) return;
         // a moment later, so the chat line (and the purple light where the raid shows one) is drawn
-        executor.schedule(() -> {
-            if (!running) return;
-            proofFrame(image -> {
-                if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen()) return;
-                executor.execute(() -> {
-                    try
-                    {
-                        BufferedImage img = ImageUtil.bufferedImageFromImage(image);
-                        if (config.screenshotSidebar()) img = withWindow(img);
-                        byte[] shot = ScreenshotEncode.jpeg(img, ApiClient.MAX_SCREENSHOT_BYTES);
-                        if (shot == null) return;
-                        raidShotTaken = java.time.ZonedDateTime.now();
-                        raidShotAt = System.currentTimeMillis();
-                        raidShot = shot;
-                    }
-                    catch (Exception ex)
-                    {
-                        log.debug("special loot screenshot failed", ex);
-                    }
-                });
+        proofFrame(600, image -> {
+            if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen()) return;
+            // the moment the frame was drawn, not when the worker gets round to saving it
+            final java.time.ZonedDateTime taken = java.time.ZonedDateTime.now();
+            final long at = System.currentTimeMillis();
+            executor.execute(() -> {
+                try
+                {
+                    BufferedImage img = ImageUtil.bufferedImageFromImage(image);
+                    if (config.screenshotSidebar()) img = withWindow(img);
+                    byte[] shot = ScreenshotEncode.jpeg(img, ApiClient.MAX_SCREENSHOT_BYTES);
+                    if (shot == null) return;
+                    raidShotTaken = taken;
+                    raidShotAt = at;
+                    raidShot = shot;
+                }
+                catch (Exception ex)
+                {
+                    log.debug("special loot screenshot failed", ex);
+                }
             });
-        }, 600, TimeUnit.MILLISECONDS);
+        }, null);
     }
 
     @Subscribe
@@ -1841,6 +1844,10 @@ public class ForgeBingoPlugin extends Plugin
     {
         ApiModels.BoardResponse b = currentBoard();
         if (b == null || b.tiles == null) return true;
+        // On more than one board (several bingos on one key): only the selected board is known here, and the drop may
+        // count for another one, so every event gets its picture; it is only sent when the server says it counted.
+        java.util.Set<String> boards = knownBoards;
+        if (boards != null && boards.size() > 1) return true;
         // finished tiles count too: drops keep counting (with proof) until the bingo is over (owner, 2026-11-11)
         for (ApiModels.Tile t : b.tiles)
         {
@@ -1906,7 +1913,7 @@ public class ForgeBingoPlugin extends Plugin
             int index = i + off;
             // marked before the frame arrives: the server's answer can come back first, and the upload waits for this
             shotsInProgress.add(eventId + "#" + index);
-            executor.schedule(() -> requestDropFrame(eventId, index), delays[i], TimeUnit.MILLISECONDS);
+            requestDropFrame(eventId, index, delays[i]);
         }
     }
 
@@ -1940,16 +1947,18 @@ public class ForgeBingoPlugin extends Plugin
     private static final long SCREENSHOT_COOLDOWN_MS = 5000;
     private volatile long lastProofShotAt;
 
-    private void requestDropFrame(String eventId, int index)
+    private void requestDropFrame(String eventId, int index, long delayMillis)
     {
         String key = eventId + "#" + index;
-        if (!running || !screenshots.containsKey(eventId)) { shotsInProgress.remove(key); return; }
-        proofFrame(image -> {
-            if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen())
+        proofFrame(delayMillis, image -> {
+            // the server may already have said this drop does not count; never with the bank PIN up or logged out
+            if (!running || !screenshots.containsKey(eventId) || client.getGameState() != GameState.LOGGED_IN || bankPinOpen())
             {
                 shotsInProgress.remove(key);
                 return;
             }
+            // the moment the frame was drawn (the stamp and capturedAt), not when the worker gets round to saving it
+            final java.time.ZonedDateTime taken = java.time.ZonedDateTime.now();
             // the player's name, read on the client thread as the frame is captured
             String player = client.getLocalPlayer() == null ? null : client.getLocalPlayer().getName();
             executor.execute(() -> {
@@ -1960,7 +1969,6 @@ public class ForgeBingoPlugin extends Plugin
                 {
                     img = withWindow(img);
                 }
-                java.time.ZonedDateTime taken = java.time.ZonedDateTime.now();
                 // stored unstamped; each team's copy is stamped with its own code and tiles when it is sent
                 byte[] shot = ScreenshotEncode.jpeg(img, ApiClient.MAX_SCREENSHOT_BYTES);
                 if (shot == null) return;
@@ -1979,7 +1987,7 @@ public class ForgeBingoPlugin extends Plugin
                 shotsInProgress.remove(key);
             }
         });
-        });
+        }, () -> shotsInProgress.remove(key));
     }
 
     /** Event ids whose screenshot is being taken right now (requested, not yet stored or given up). */
@@ -2005,18 +2013,79 @@ public class ForgeBingoPlugin extends Plugin
      */
     private void proofFrame(java.util.function.Consumer<java.awt.Image> then)
     {
-        proofHideSince = System.currentTimeMillis();
-        proofFramesPending.incrementAndGet();
-        executor.schedule(() -> drawManager.requestNextFrameListener(image -> {
-            try
+        proofFrame(0, then, null);
+    }
+
+    /** A proof frame waiting for its moment. */
+    private static final class FrameJob
+    {
+        final long at;
+        final java.util.function.Consumer<java.awt.Image> then;
+        final Runnable skipped;
+        /** our overlays were switched off for this frame at this time (0 = not yet) */
+        long hiddenAt;
+
+        FrameJob(long at, java.util.function.Consumer<java.awt.Image> then, Runnable skipped)
+        {
+            this.at = at;
+            this.then = then;
+            this.skipped = skipped;
+        }
+    }
+
+    private final java.util.Queue<FrameJob> frameJobs = new java.util.concurrent.ConcurrentLinkedQueue<>();
+    /** a frame that could not be taken this long after its moment is given up (the game was not drawing) */
+    static final long PROOF_FRAME_GIVE_UP_MS = 3000;
+
+    /**
+     * As above, delayMillis from now. Timed on the client thread (onClientTick), never on the shared worker: that one
+     * thread also does every server call, so a slow send or a picture upload in progress used to hold the next
+     * picture back by seconds (live proofs were taken 1.5-3 s after the drop instead of the planned delay).
+     * skipped runs instead of then when the frame is given up. Any thread.
+     */
+    private void proofFrame(long delayMillis, java.util.function.Consumer<java.awt.Image> then, Runnable skipped)
+    {
+        frameJobs.add(new FrameJob(System.currentTimeMillis() + Math.max(0, delayMillis), then, skipped));
+    }
+
+    /** Client thread, every 20 ms: hides our overlays when a proof frame is due, then takes the frame after that. */
+    @Subscribe
+    public void onClientTick(net.runelite.api.events.ClientTick e)
+    {
+        if (frameJobs.isEmpty()) return;
+        long now = System.currentTimeMillis();
+        for (java.util.Iterator<FrameJob> it = frameJobs.iterator(); it.hasNext();)
+        {
+            FrameJob job = it.next();
+            if (now < job.at) continue;
+            if (!running || now - job.at > PROOF_FRAME_GIVE_UP_MS)
             {
-                then.accept(image);
+                it.remove();
+                if (job.hiddenAt != 0) proofFramesPending.updateAndGet(n -> Math.max(0, n - 1));
+                if (job.skipped != null) job.skipped.run();
+                continue;
             }
-            finally
+            if (job.hiddenAt == 0)
             {
-                proofFramesPending.updateAndGet(n -> Math.max(0, n - 1));
+                job.hiddenAt = now;
+                proofHideSince = now;
+                proofFramesPending.incrementAndGet();
             }
-        }), PROOF_HIDE_LEAD_MS, TimeUnit.MILLISECONDS);
+            else if (now - job.hiddenAt >= PROOF_HIDE_LEAD_MS)
+            {
+                it.remove();
+                drawManager.requestNextFrameListener(image -> {
+                    try
+                    {
+                        job.then.accept(image);
+                    }
+                    finally
+                    {
+                        proofFramesPending.updateAndGet(n -> Math.max(0, n - 1));
+                    }
+                });
+            }
+        }
     }
 
     /**
