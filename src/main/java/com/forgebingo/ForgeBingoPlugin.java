@@ -1248,6 +1248,8 @@ public class ForgeBingoPlugin extends Plugin
         Player me = client.getLocalPlayer();
         String mine = me == null ? null : Sanitizer.normalizeRsn(me.getName());
         if (mine == null || !mine.equalsIgnoreCase(Sanitizer.normalizeRsn(m.group(1)))) return;
+        // the player turned automatic proof screenshots off: take none
+        if (!config.screenshotOnMatch()) return;
         // a moment later, so the chat line (and the purple light where the raid shows one) is drawn
         executor.schedule(() -> {
             if (!running) return;
@@ -1797,7 +1799,7 @@ public class ForgeBingoPlugin extends Plugin
         }
         log.debug("queue event {} {}", ev.sourceType, ev.label());
         // a raid chest is photographed when its loot could count, or when the raid itself just counted for a tile
-        if (maybeScreenshot && (couldCount(ev) || (chestWindow && raidWithChest(ev.sourceName) && freshRaidKc() != null)))
+        if (maybeScreenshot && config.screenshotOnMatch() && (couldCount(ev) || (chestWindow && raidWithChest(ev.sourceName) && freshRaidKc() != null)))
         {
             captureScreenshot(ev.id, shotDelays(ev.sourceType, ev.sourceName, chestWindow), chestWindow);
         }
@@ -2180,7 +2182,7 @@ public class ForgeBingoPlugin extends Plugin
         // a duplicate is the server's stored answer to a send whose reply was lost (the queue sent it again): it
         // still names the entries this drop made, so the picture still goes to them. It is uploaded once at most:
         // the first answer to arrive takes the picture out of the map.
-        if (result == null || !result.isMatched())
+        if (result == null || !result.isMatched() || !config.screenshotOnMatch())
         {
             screenshots.remove(event.id);
             return;
