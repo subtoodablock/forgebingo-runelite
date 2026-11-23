@@ -101,8 +101,20 @@ public interface ForgeBingoConfig extends Config
         return false;
     }
 
-    // "Screenshot on matched drop" was removed (owner, 2026-11-12): a matched drop always sends a game-window
-    // screenshot as proof, so the bingo master can rely on one being there. The Plugin Hub warning says so.
+    // Restored 2026-11-22 at the RuneLite reviewer's request: players who turned proof screenshots off keep that
+    // choice (same key, so their saved setting still applies). Off: no automatic proof screenshots are taken or sent;
+    // the side panel's "Send screenshot" button still works because the player presses it themselves.
+    @ConfigItem(
+        keyName = "screenshotOnMatch",
+        name = "Screenshot on matched drop",
+        description = "After the server confirms a drop counts for your team, upload a game-window screenshot as proof. On by default.",
+        warning = "Screenshots of your game window (which may show chat) are sent to the ForgeBingo server, only after a drop is confirmed as counting.",
+        position = 2
+    )
+    default boolean screenshotOnMatch()
+    {
+        return true;
+    }
 
     @ConfigItem(
         keyName = "screenshotSidebar",
