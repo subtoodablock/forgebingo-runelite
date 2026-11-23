@@ -20,7 +20,8 @@ import org.slf4j.LoggerFactory;
 /**
  * Durable FIFO of events not yet accepted by the server. Persisted as JSON in the plugin's own data folder through
  * RuneLite's Filepath API (atomic write via temp file + move) so a crash or client close loses nothing.
- * Bounded by count and age.
+ * Bounded by count and age. With deferred saves (the plugin's mode) an event is on disk once {@link #flush()} has
+ * run after it was added; until then it is only in memory.
  */
 public final class OfflineQueue
 {
@@ -36,11 +37,28 @@ public final class OfflineQueue
     private final Filepath file;
     private final Gson gson;
     private final Map<String, QueuedEvent> entries = new LinkedHashMap<>();
+    /** changes are kept in memory and written by {@link #flush()} (from a worker thread), not by the caller */
+    private final boolean deferSaves;
+    /** deferred mode: the file is behind what is in memory */
+    private boolean dirty;
+    /** one writer of the file at a time; always taken before this queue's own lock */
+    private final Object saveLock = new Object();
 
+    /** A queue that writes its file on every change, on the calling thread. */
     public OfflineQueue(Filepath file, Gson gson)
+    {
+        this(file, gson, false);
+    }
+
+    /**
+     * @param deferSaves true: a change only marks the queue as changed, and {@link #flush()} writes the file. The
+     *                   plugin adds events on the game thread, which must not write files; its worker flushes.
+     */
+    public OfflineQueue(Filepath file, Gson gson, boolean deferSaves)
     {
         this.file = file;
         this.gson = gson;
+        this.deferSaves = deferSaves;
     }
 
     public synchronized void load()
@@ -90,7 +108,7 @@ public final class OfflineQueue
             evicted.add(it.next());
             it.remove();
         }
-        save();
+        changed();
         return evicted;
     }
 
@@ -110,7 +128,7 @@ public final class OfflineQueue
         }
         if (!expired.isEmpty())
         {
-            save();
+            changed();
         }
         return expired;
     }
@@ -132,7 +150,7 @@ public final class OfflineQueue
     {
         if (entries.remove(eventId) != null)
         {
-            save();
+            changed();
         }
     }
 
@@ -144,7 +162,7 @@ public final class OfflineQueue
             q.attempts = attempts;
             q.nextAttemptAtMillis = nextAttemptAt;
             q.lastError = error;
-            save();
+            changed();
         }
     }
 
@@ -155,7 +173,7 @@ public final class OfflineQueue
         {
             q.nextAttemptAtMillis = now;
         }
-        save();
+        changed();
     }
 
     public synchronized int size()
@@ -166,10 +184,58 @@ public final class OfflineQueue
     public synchronized void clear()
     {
         entries.clear();
-        save();
+        changed();
     }
 
-    private void save()
+    /** Called with this queue's lock held, after a change. */
+    private void changed()
+    {
+        if (deferSaves)
+        {
+            dirty = true;
+        }
+        else
+        {
+            write(gson.toJson(new ArrayList<>(entries.values()), LIST_TYPE));
+        }
+    }
+
+    /**
+     * Deferred mode: writes the file when something changed since the last write (does nothing otherwise, and
+     * nothing in the write-on-every-change mode). Call from a worker thread. A failed write is tried again by the
+     * next flush.
+     *
+     * @return true when the file was written
+     */
+    public boolean flush()
+    {
+        if (!deferSaves) return false;
+        synchronized (saveLock)
+        {
+            String json;
+            synchronized (this)
+            {
+                if (!dirty) return false;
+                json = gson.toJson(new ArrayList<>(entries.values()), LIST_TYPE);
+                dirty = false;
+            }
+            // the file is written outside the queue's lock: the game thread adding an event never waits for the disk
+            if (write(json)) return true;
+            synchronized (this)
+            {
+                dirty = true;
+            }
+            return false;
+        }
+    }
+
+    /** Deferred mode: something changed that {@link #flush()} has not written yet. */
+    public synchronized boolean unsaved()
+    {
+        return dirty;
+    }
+
+    private boolean write(String json)
     {
         try
         {
@@ -178,7 +244,7 @@ public final class OfflineQueue
             Filepath tmp = parent.joinSegment(file.getFileName() + ".tmp");
             try (Writer writer = tmp.openBufferedWriter())
             {
-                gson.toJson(new ArrayList<>(entries.values()), LIST_TYPE, writer);
+                writer.write(json);
             }
             try
             {
@@ -188,10 +254,12 @@ public final class OfflineQueue
             {
                 tmp.moveTo(file, StandardCopyOption.REPLACE_EXISTING);
             }
+            return true;
         }
         catch (IOException | RuntimeException ex)
         {
             log.debug("Could not persist queue to {}: {}", file, ex.toString());
+            return false;
         }
     }
 }

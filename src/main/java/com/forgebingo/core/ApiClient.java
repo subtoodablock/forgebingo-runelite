@@ -191,13 +191,21 @@ public final class ApiClient
         {
             return new ApiResult<>(400, null, "1-25 submission ids required", "invalid_targets", null, 0);
         }
-        MultipartBody.Builder mb = new MultipartBody.Builder().setType(MultipartBody.FORM)
-            .addFormDataPart("submissionIds", String.join(",", submissionIds));
+        RequestBody body = proofBody("submissionIds", String.join(",", submissionIds), png, stampKeyword, capturedAt, label);
+        return execute(uploadHttp, builder(url("v1", "boards", teamBoardId, "proofs")).post(body).build(), ApiModels.ProofResponse.class);
+    }
+
+    /**
+     * The multipart body of a proof upload: what the picture is for (targetField: "submissionIds" or "taskId"), the
+     * file name label, the stamped keyword and capture time (each at most 40 characters), then the picture itself.
+     */
+    private static RequestBody proofBody(String targetField, String target, byte[] png, String stampKeyword, String capturedAt, String label)
+    {
+        MultipartBody.Builder mb = new MultipartBody.Builder().setType(MultipartBody.FORM).addFormDataPart(targetField, target);
         addLabel(mb, label);
         if (stampKeyword != null && !stampKeyword.isEmpty()) mb.addFormDataPart("stampKeyword", stampKeyword.length() > 40 ? stampKeyword.substring(0, 40) : stampKeyword);
         if (capturedAt != null && !capturedAt.isEmpty()) mb.addFormDataPart("capturedAt", capturedAt.length() > 40 ? capturedAt.substring(0, 40) : capturedAt);
-        RequestBody body = mb.addFormDataPart("file", fileName(png), RequestBody.create(MediaType.parse(mime(png)), png)).build();
-        return execute(uploadHttp, builder(url("v1", "boards", teamBoardId, "proofs")).post(body).build(), ApiModels.ProofResponse.class);
+        return mb.addFormDataPart("file", fileName(png), RequestBody.create(MediaType.parse(mime(png)), png)).build();
     }
 
     private static String fileName(byte[] b) { return ScreenshotEncode.isJpeg(b) ? "proof.jpg" : "proof.png"; }
@@ -210,11 +218,7 @@ public final class ApiClient
         {
             return new ApiResult<>(413, null, "screenshot too large", "payload_too_large", null, 0);
         }
-        MultipartBody.Builder mb = new MultipartBody.Builder().setType(MultipartBody.FORM).addFormDataPart("taskId", taskId);
-        addLabel(mb, label);
-        if (stampKeyword != null && !stampKeyword.isEmpty()) mb.addFormDataPart("stampKeyword", stampKeyword.length() > 40 ? stampKeyword.substring(0, 40) : stampKeyword);
-        if (capturedAt != null && !capturedAt.isEmpty()) mb.addFormDataPart("capturedAt", capturedAt.length() > 40 ? capturedAt.substring(0, 40) : capturedAt);
-        RequestBody body = mb.addFormDataPart("file", fileName(png), RequestBody.create(MediaType.parse(mime(png)), png)).build();
+        RequestBody body = proofBody("taskId", taskId, png, stampKeyword, capturedAt, label);
         return execute(uploadHttp, builder(url("v1", "boards", teamBoardId, "proofs")).post(body).build(), ApiModels.ProofResponse.class);
     }
 

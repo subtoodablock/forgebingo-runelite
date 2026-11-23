@@ -4,6 +4,8 @@ import com.forgebingo.core.ActivityWatcher;
 import com.forgebingo.core.ApiClient;
 import com.forgebingo.core.ApiModels;
 import com.forgebingo.core.ApiResult;
+import com.forgebingo.core.BoardCelebrations;
+import com.forgebingo.core.BoardSelection;
 import com.forgebingo.core.ChatParsers;
 import com.forgebingo.core.ConnectionStatus;
 import com.forgebingo.core.ErrorClass;
@@ -11,8 +13,11 @@ import com.forgebingo.core.EventDeduplicator;
 import com.forgebingo.core.GameEvent;
 import com.forgebingo.core.InventoryDiff;
 import com.forgebingo.core.ItemNames;
+import com.forgebingo.core.MatchNotices;
 import com.forgebingo.core.OfflineQueue;
 import com.forgebingo.core.PetDetector;
+import com.forgebingo.core.ProofPlan;
+import com.forgebingo.core.ProofPolicy;
 import com.forgebingo.core.QueueProcessor;
 import com.forgebingo.core.QueuedEvent;
 import com.forgebingo.core.Sanitizer;
@@ -192,6 +197,17 @@ public class ForgeBingoPlugin extends Plugin
     private volatile java.util.Set<String> knownBoards;
     /** how many of the player's boards are live right now (a drop can count for one that is not selected) */
     private volatile int liveBoards;
+    /**
+     * The team board on screen (null before the first one shows). The saved choice (config activeBoardId) stays empty
+     * until the player picks a board, while the first live board is shown anyway: this is that board.
+     */
+    private volatile String selectedBoardId;
+    /** counts key / address changes: a board list fetched for the old key is thrown away, not compared with the new */
+    private final java.util.concurrent.atomic.AtomicInteger boardEpoch = new java.util.concurrent.atomic.AtomicInteger();
+    /** own finished tiles celebrated on boards not looked at yet in this session (once per tile) */
+    private final Set<String> ownCelebrated = ConcurrentHashMap.newKeySet();
+    /** guards queueFuture: drains are scheduled from the client thread, the UI thread and the worker */
+    private final Object queueLock = new Object();
 
     /**
      * A drop screenshot waiting for the server's answer. Kept unstamped: one drop can count for several teams in
@@ -229,7 +245,8 @@ public class ForgeBingoPlugin extends Plugin
             configManager.unsetConfiguration(ForgeBingoConfig.GROUP, "apiBaseUrl");
         }
         api = new ApiClient(okHttpClient, gson, this::effectiveBaseUrl, config::apiKey, VERSION);
-        queue = new OfflineQueue(queueFile(), gson);
+        // saved by the worker (flushQueue), never on the game thread
+        queue = new OfflineQueue(queueFile(), gson, true);
         queue.load();
         processor = new QueueProcessor(queue, api::sendEvent, new QueueListener(), System::currentTimeMillis, random);
 
@@ -269,8 +286,14 @@ public class ForgeBingoPlugin extends Plugin
     protected void shutDown()
     {
         running = false;
-        if (queueFuture != null) queueFuture.cancel(false);
+        synchronized (queueLock)
+        {
+            if (queueFuture != null) queueFuture.cancel(false);
+            queueFuture = null;
+        }
         if (boardFuture != null) boardFuture.cancel(false);
+        // whatever the worker has not written yet (an event added a moment ago) goes to disk before the queue is let go
+        flushQueue(queue);
         overlayManager.remove(effects);
         effects.clear();
         if (boardInput != null) boardInput.unregister(mouseManager, keyManager);
@@ -282,6 +305,9 @@ public class ForgeBingoPlugin extends Plugin
         currentBoard = null;
         boardVersions.clear(); // or the next start would think the board is already loaded and never show it
         knownBoards = null;
+        liveBoards = 0;
+        selectedBoardId = null;
+        ownCelebrated.clear();
         helloEvents = null;
         archiveChests.reset();
         wasInstance = false;
@@ -289,18 +315,23 @@ public class ForgeBingoPlugin extends Plugin
         raidKcResult = null;
         if (navigationButton != null) clientToolbar.removeNavigation(navigationButton);
         navigationButton = null;
-        ForgeBingoPanel closing = panel;
-        if (closing != null) SwingUtilities.invokeLater(closing::dispose);
+        ForgeBingoPanel closingPanel = panel;
+        if (closingPanel != null) SwingUtilities.invokeLater(closingPanel::dispose);
         panel = null;
         screenshots.clear();
+        proofRetries.clear();
         frameJobs.clear();
         shotsInProgress.clear();
         proofFramesPending.set(0);
-        levels.clear();
         dedup.clear();
-        petDetector.reset();
-        lastInventory = null;
-        lastContainers.clear();
+        // these belong to the client thread (its event handlers read and write them): reset there, not from here
+        clientThread.invoke(() -> {
+            if (running) return; // switched back on meanwhile: the new session's state stays
+            levels.clear();
+            petDetector.reset();
+            lastInventory = null;
+            lastContainers.clear();
+        });
         api = null;
         processor = null;
         queue = null;
@@ -321,19 +352,56 @@ public class ForgeBingoPlugin extends Plugin
     String effectiveBaseUrl()
     {
         String raw = config.apiBaseUrl();
-        okhttp3.HttpUrl u = ApiClient.parseBaseUrl(raw);
-        okhttp3.HttpUrl def = ApiClient.parseBaseUrl(ForgeBingoConfig.DEFAULT_BASE_URL);
-        if (u == null || def == null) return raw;
-        String host = u.host();
-        if (host.equals(def.host()) || "localhost".equals(host) || "127.0.0.1".equals(host) || host.equalsIgnoreCase(config.trustedApiHost().trim()))
+        String trusted = config.trustedApiHost();
+        // asked for on every event and hello: the address is only parsed again when a setting changed
+        BaseUrlCheck c = baseUrlCheck;
+        if (c == null || !java.util.Objects.equals(c.raw, raw) || !java.util.Objects.equals(c.trusted, trusted))
+        {
+            c = BaseUrlCheck.of(raw, trusted);
+            baseUrlCheck = c;
+        }
+        if (c.host == null) return raw;
+        if (c.allowed)
         {
             pendingHost = null;
             return raw;
         }
-        pendingHost = host;
-        askToTrust(host);
+        pendingHost = c.host;
+        askToTrust(c.host);
         return null;
     }
+
+    /** The verdict on one pair of settings (API address, approved host), kept until either changes. */
+    private static final class BaseUrlCheck
+    {
+        final String raw;
+        final String trusted;
+        /** the address's host, or null when it (or the built-in default) is not a usable address */
+        final String host;
+        /** the ForgeBingo server, localhost, or the host the player approved */
+        final boolean allowed;
+
+        private BaseUrlCheck(String raw, String trusted, String host, boolean allowed)
+        {
+            this.raw = raw;
+            this.trusted = trusted;
+            this.host = host;
+            this.allowed = allowed;
+        }
+
+        static BaseUrlCheck of(String raw, String trusted)
+        {
+            okhttp3.HttpUrl u = ApiClient.parseBaseUrl(raw);
+            okhttp3.HttpUrl def = ApiClient.parseBaseUrl(ForgeBingoConfig.DEFAULT_BASE_URL);
+            if (u == null || def == null) return new BaseUrlCheck(raw, trusted, null, false);
+            String host = u.host();
+            boolean allowed = host.equals(def.host()) || "localhost".equals(host) || "127.0.0.1".equals(host)
+                || (trusted != null && host.equalsIgnoreCase(trusted.trim()));
+            return new BaseUrlCheck(raw, trusted, host, allowed);
+        }
+    }
+
+    private volatile BaseUrlCheck baseUrlCheck;
 
     /** The offline queue lives in .runelite/plugin-data/forgebingo (RuneLite's Filepath API, moved from .runelite/forgebingo). */
     private Filepath queueFile()
@@ -620,7 +688,7 @@ public class ForgeBingoPlugin extends Plugin
         if (on) ids.add(tileId); else ids.remove(tileId);
         configManager.setConfiguration(ForgeBingoConfig.GROUP, "workingOn", String.join(",", ids));
         // tell the server so the whole team sees it (servers before 2026-11-11 answer 404: the local list still works)
-        String team = config.activeBoardId();
+        String team = shownBoardId();
         ApiClient a = api;
         if (team == null || team.isEmpty() || a == null) return;
         executor.execute(() -> {
@@ -635,6 +703,16 @@ public class ForgeBingoPlugin extends Plugin
                 notice("Couldn't update Working on: " + r.describe(), false);
             }
         });
+    }
+
+    /**
+     * The team board on screen: the one the last poll showed, else the saved choice. The saved choice alone is not
+     * enough: it is empty until the player picks a board, while the first live board is shown without a pick.
+     */
+    private String shownBoardId()
+    {
+        String shown = selectedBoardId;
+        return shown != null && !shown.isEmpty() ? shown : config.activeBoardId();
     }
 
     // ---------- "Rejected" lines in the side panel: which ones this player has seen and dismissed, per team board ----------
@@ -760,6 +838,12 @@ public class ForgeBingoPlugin extends Plugin
         if ("apiBaseUrl".equals(e.getKey())) askedHost = null; // ask again for a newly typed address
         if ("apiKey".equals(e.getKey()) || "apiBaseUrl".equals(e.getKey()) || "trustedApiHost".equals(e.getKey()))
         {
+            // another key (or server) has other boards: forget the old list, or its live board would look newly
+            // opened ("The bingo is live!", the reveal, the saved board choice overwritten)
+            boardEpoch.incrementAndGet();
+            knownBoards = null;
+            liveBoards = 0;
+            selectedBoardId = null;
             boardVersions.clear();
             if (processor != null) processor.resumeAfterAuthChange();
             connect();
@@ -873,7 +957,10 @@ public class ForgeBingoPlugin extends Plugin
             return;
         }
         loadCatalogue();
+        int epoch = boardEpoch.get();
         ApiResult<ApiModels.BoardsResponse> list = a.boards();
+        // the key or address changed while this was on its way: the answer is for the old one
+        if (epoch != boardEpoch.get()) return;
         if (!list.ok() || list.body == null)
         {
             boardFailures++;
@@ -886,56 +973,40 @@ public class ForgeBingoPlugin extends Plugin
         List<ApiModels.BoardSummary> boards = list.body.boards;
         // Shared reveal: a board that appears while we're running has just opened for everyone (the bingo started).
         // Switch to it, say so in chat and open it over the game with a Legendary animation.
-        java.util.Set<String> ids = new java.util.HashSet<>();
-        int live = 0;
-        for (ApiModels.BoardSummary b : boards)
-        {
-            ids.add(b.teamBoardId);
-            if (b.active) live++;
-        }
-        liveBoards = live;
+        liveBoards = BoardSelection.liveCount(boards);
         java.util.Set<String> before = knownBoards;
-        knownBoards = ids;
-        if (before != null)
+        knownBoards = BoardSelection.ids(boards);
+        if (epoch != boardEpoch.get())
         {
-            for (ApiModels.BoardSummary b : boards)
-            {
-                if (before.contains(b.teamBoardId) || !b.active) continue;
-                notice("The bingo is live! " + (b.eventName == null ? "Your board" : b.eventName) + " is open. Good luck!", true);
-                configManager.setConfiguration(ForgeBingoConfig.GROUP, "activeBoardId", b.teamBoardId);
-                boardVersions.clear();
-                String ev = b.eventId;
-                notifyPanel(p -> p.removeUpcoming(ev));
-                if (config.boardOverlayAnimations()) boardOverlay.openReveal();
-                break;
-            }
+            // the key changed in this very moment: this list must not be what the new key's boards are compared with
+            knownBoards = null;
+            return;
         }
-        String wanted = config.activeBoardId();
-        ApiModels.BoardSummary selected = null;
-        for (ApiModels.BoardSummary b : boards)
+        ApiModels.BoardSummary opened = BoardSelection.newlyOpened(boards, before);
+        if (opened != null)
         {
-            if (b.teamBoardId.equals(wanted)) selected = b;
+            notice("The bingo is live! " + (opened.eventName == null ? "Your board" : opened.eventName) + " is open. Good luck!", true);
+            configManager.setConfiguration(ForgeBingoConfig.GROUP, "activeBoardId", opened.teamBoardId);
+            boardVersions.clear();
+            String ev = opened.eventId;
+            notifyPanel(p -> p.removeUpcoming(ev));
+            if (config.boardOverlayAnimations()) boardOverlay.openReveal();
         }
-        if (selected == null)
-        {
-            for (ApiModels.BoardSummary b : boards)
-            {
-                if (b.active) { selected = b; break; }
-            }
-            if (selected == null && !boards.isEmpty()) selected = boards.get(0);
-        }
-        final ApiModels.BoardSummary sel = selected;
+        final ApiModels.BoardSummary sel = BoardSelection.select(boards, config.activeBoardId());
         notifyPanel(p -> p.setBoards(boards, sel == null ? null : sel.teamBoardId));
         if (sel == null)
         {
+            selectedBoardId = null;
             return;
         }
         String version = sel.updatedAt == null ? "?" : sel.updatedAt;
         if (version.equals(boardVersions.get(sel.teamBoardId)))
         {
+            selectedBoardId = sel.teamBoardId;
             return;
         }
         ApiResult<ApiModels.BoardResponse> r = a.board(sel.teamBoardId);
+        if (epoch != boardEpoch.get()) return;
         if (!r.ok() || r.body == null)
         {
             boardFailures++;
@@ -945,6 +1016,7 @@ public class ForgeBingoPlugin extends Plugin
         }
         if (pollProblem != null) pollRecovered();
         ApiResult<ApiModels.LeaderboardResponse> lb = a.leaderboard(sel.teamBoardId);
+        if (epoch != boardEpoch.get()) return;
         boardVersions.put(sel.teamBoardId, version);
         Map<String, String> titles = new ConcurrentHashMap<>();
         java.util.Set<String> hidden = ConcurrentHashMap.newKeySet();
@@ -960,6 +1032,7 @@ public class ForgeBingoPlugin extends Plugin
         hiddenTiles = hidden;
         indexBoardItems(r.body);
         currentBoard = r.body;
+        selectedBoardId = sel.teamBoardId;
         celebrateChanges(sel.teamBoardId, r.body);
         notifyPanel(p -> p.setBoard(r.body, lb.ok() ? lb.body : null, itemManager));
     }
@@ -970,77 +1043,32 @@ public class ForgeBingoPlugin extends Plugin
     private void celebrateChanges(String teamBoardId, ApiModels.BoardResponse board)
     {
         Set<String> seen = celebrated.get(teamBoardId);
-        Set<String> now = new HashSet<>();
-        for (ApiModels.Tile t : board.tiles)
-        {
-            if (t.completed && t.id != null) now.add(t.id);
-        }
-        boolean all = !board.tiles.isEmpty() && now.size() >= board.tiles.size();
+        BoardCelebrations.Change change = BoardCelebrations.changes(seen, board);
         if (seen == null)
         {
             // first look at this board in this session: no replay of old history, but a finished board still gets its show
             celebrated.put(teamBoardId, ConcurrentHashMap.newKeySet());
-            celebrated.get(teamBoardId).addAll(now);
-            if (all && config.effects() && blackoutShown.add(teamBoardId)) effects.push(EffectsOverlay.Kind.BLACKOUT, "");
+            celebrated.get(teamBoardId).addAll(change.done);
+            if (change.all && config.effects() && blackoutShown.add(teamBoardId)) effects.push(EffectsOverlay.Kind.BLACKOUT, "");
             return;
         }
-        int size = board.size();
-        int before = seen.size();
-        int linesBefore = countLines(seen, board, size);
+        seen.addAll(change.done);
+        if (!config.effects()) return;
         // Newly finished tiles found on a refresh were finished by a teammate (your own drops celebrate the moment the
         // server answers, which marks them seen first): no on-screen banner, a fireworks card in the side panel instead.
-        for (ApiModels.Tile t : board.tiles)
-        {
-            if (t.completed && t.id != null && seen.add(t.id) && config.effects())
-            {
-                String title = TileInfo.shownTitle(t);
-                notifyPanel(p -> p.teamFinished(title));
-            }
-        }
-        seen.addAll(now);
-        int linesAfter = countLines(seen, board, size);
-        if (!config.effects()) return;
-        if (all && blackoutShown.add(teamBoardId)) effects.push(EffectsOverlay.Kind.BLACKOUT, "");
-        else if (linesAfter > linesBefore && now.size() > before) effects.push(EffectsOverlay.Kind.LINE, linesAfter - linesBefore > 1 ? "Double line complete!" : "Line complete!");
-    }
-
-    private static int countLines(Set<String> doneIds, ApiModels.BoardResponse board, int size)
-    {
-        boolean[][] d = new boolean[size][size];
-        for (ApiModels.Tile t : board.tiles)
-        {
-            if (t.id != null && doneIds.contains(t.id) && t.row < size && t.col < size) d[t.row][t.col] = true;
-        }
-        int n = 0;
-        for (int i = 0; i < size; i++)
-        {
-            boolean row = true;
-            boolean col = true;
-            for (int j = 0; j < size; j++)
-            {
-                row &= d[i][j];
-                col &= d[j][i];
-            }
-            if (row) n++;
-            if (col) n++;
-        }
-        boolean diag = true;
-        boolean anti = true;
-        for (int i = 0; i < size; i++)
-        {
-            diag &= d[i][i];
-            anti &= d[i][size - 1 - i];
-        }
-        if (diag) n++;
-        if (anti) n++;
-        return n;
+        for (String title : change.finishedTitles) notifyPanel(p -> p.teamFinished(title));
+        if (change.all && blackoutShown.add(teamBoardId)) effects.push(EffectsOverlay.Kind.BLACKOUT, "");
+        else if (change.newLines > 0) effects.push(EffectsOverlay.Kind.LINE, change.lineText());
     }
 
     /** Banner over the game plus the level-up fireworks on the player, once per tile. */
     private void celebrateTile(String teamBoardId, String tileId, String title)
     {
-        Set<String> seen = celebrated.computeIfAbsent(teamBoardId == null ? "" : teamBoardId, k -> ConcurrentHashMap.newKeySet());
-        if (!seen.add(tileId) || !config.effects()) return;
+        // Marked seen on its own board, so the next refresh does not announce it again as a teammate's. A board not
+        // looked at yet in this session has no list to mark (its first look records everything already finished).
+        Set<String> seen = teamBoardId == null ? null : celebrated.get(teamBoardId);
+        boolean first = seen != null ? seen.add(tileId) : ownCelebrated.add(tileId);
+        if (!first || !config.effects()) return;
         effects.push(EffectsOverlay.Kind.TILE, title == null ? "" : title);
         clientThread.invoke(() -> {
             Player me = client.getLocalPlayer();
@@ -1143,12 +1171,10 @@ public class ForgeBingoPlugin extends Plugin
     private boolean reclaimingAfterDeath(int tick)
     {
         if (tick <= buyBackUntilTick) return true;
-        for (int group : new int[] {net.runelite.api.gameval.InterfaceID.GRAVESTONE_RETRIEVAL,
-            net.runelite.api.gameval.InterfaceID.DEATH_OFFICE, net.runelite.api.gameval.InterfaceID.DEATH_COFFER,
-            net.runelite.api.gameval.InterfaceID.DEATHKEEP})
+        if (widgetShowing(net.runelite.api.gameval.InterfaceID.GRAVESTONE_RETRIEVAL, net.runelite.api.gameval.InterfaceID.DEATH_OFFICE,
+            net.runelite.api.gameval.InterfaceID.DEATH_COFFER, net.runelite.api.gameval.InterfaceID.DEATHKEEP))
         {
-            net.runelite.api.widgets.Widget w = client.getWidget(group, 0);
-            if (w != null && !w.isHidden()) return true;
+            return true;
         }
         Player me = client.getLocalPlayer();
         if (me == null) return false;
@@ -1258,14 +1284,6 @@ public class ForgeBingoPlugin extends Plugin
      */
     private volatile ApiModels.EventResult raidKcResult;
     private volatile long raidKcAt;
-
-    /** Raids whose completion message comes before their reward chest is opened. */
-    static boolean raidWithChest(String name)
-    {
-        if (name == null) return false;
-        String n = name.toLowerCase(java.util.Locale.ROOT);
-        return n.contains("chambers of xeric") || n.contains("theatre of blood") || n.contains("tombs of amascut") || n.contains("fractured archive");
-    }
 
     private ApiModels.EventResult freshRaidKc()
     {
@@ -1436,15 +1454,7 @@ public class ForgeBingoPlugin extends Plugin
             }
             return;
         }
-        Item[] slots = c.getItems();
-        int[] ids = new int[slots.length];
-        int[] qty = new int[slots.length];
-        for (int i = 0; i < slots.length; i++)
-        {
-            ids[i] = slots[i].getId();
-            qty[i] = slots[i].getQuantity();
-        }
-        Map<Integer, Integer> now = InventoryDiff.counts(ids, qty);
+        Map<Integer, Integer> now = containerCounts(c);
         Map<Integer, Integer> before = lastInventory;
         lastInventory = now;
         if (before != null)
@@ -1580,7 +1590,13 @@ public class ForgeBingoPlugin extends Plugin
 
     private boolean grandExchangeOpen()
     {
-        for (int group : new int[] {GE_OFFERS_GROUP, GE_COLLECT_GROUP})
+        return widgetShowing(GE_OFFERS_GROUP, GE_COLLECT_GROUP);
+    }
+
+    /** One of these interface groups is open and showing. Client thread. */
+    private boolean widgetShowing(int... groups)
+    {
+        for (int group : groups)
         {
             net.runelite.api.widgets.Widget w = client.getWidget(group, 0);
             if (w != null && !w.isHidden()) return true;
@@ -1883,83 +1899,74 @@ public class ForgeBingoPlugin extends Plugin
         }
         log.debug("queue event {} {}", ev.sourceType, ev.label());
         // a raid chest is photographed when its loot could count, or when the raid itself just counted for a tile
-        if (maybeScreenshot && config.screenshotOnMatch() && (couldCount(ev) || (chestWindow && raidWithChest(ev.sourceName) && freshRaidKc() != null)))
+        if (maybeScreenshot && config.screenshotOnMatch() && (ProofPolicy.couldCount(ev, currentBoard(), liveBoards) || (chestWindow && ProofPolicy.raidWithChest(ev.sourceName) && freshRaidKc() != null)))
         {
             captureScreenshot(ev.id, shotDelays(ev.sourceType, ev.sourceName, chestWindow), chestWindow);
         }
+        // kept in memory here (this is the game thread); the worker writes the file, ahead of the send that follows
         List<QueuedEvent> evicted = q.add(new QueuedEvent(ev, System.currentTimeMillis()));
+        executor.execute(() -> flushQueue(q));
         for (QueuedEvent old : evicted) notice("Queue full, dropped oldest event: " + old.event.label(), true);
         int size = q.size();
         notifyPanel(p -> p.setQueueSize(size, null));
         scheduleQueueDrain(0);
     }
 
+    /** Any thread: the newest request replaces the one waiting. */
     private void scheduleQueueDrain(long delayMillis)
     {
-        if (!running) return;
-        if (queueFuture != null) queueFuture.cancel(false);
-        queueFuture = executor.schedule(() -> {
-            QueueProcessor p = processor;
-            if (!running || p == null) return;
-            long next;
-            try
-            {
-                next = p.drain();
-            }
-            catch (RuntimeException ex)
-            {
-                log.debug("queue drain failed", ex);
-                next = 60_000;
-            }
-            if (next >= 0) scheduleQueueDrain(next);
-        }, delayMillis, TimeUnit.MILLISECONDS);
+        synchronized (queueLock)
+        {
+            if (!running) return;
+            if (queueFuture != null) queueFuture.cancel(false);
+            queueFuture = executor.schedule(this::drainQueue, delayMillis, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    /** Worker thread: sends what is due, then writes the queue file once for everything the drain changed. */
+    private void drainQueue()
+    {
+        QueueProcessor p = processor;
+        OfflineQueue q = queue;
+        if (!running || p == null) return;
+        long next;
+        try
+        {
+            next = p.drain();
+        }
+        catch (RuntimeException ex)
+        {
+            log.debug("queue drain failed", ex);
+            next = 60_000;
+        }
+        finally
+        {
+            flushQueue(q);
+        }
+        if (next >= 0) scheduleQueueDrain(next);
+    }
+
+    /** Writes the offline queue's file when it is behind what is in memory. Worker thread (or switching off). */
+    private void flushQueue(OfflineQueue q)
+    {
+        try
+        {
+            if (q != null) q.flush();
+        }
+        catch (RuntimeException ex)
+        {
+            log.debug("queue save failed", ex);
+        }
+    }
+
+    /** RuneLite is closing: an event added a moment ago may not be on disk yet. */
+    @Subscribe
+    public void onClientShutdown(net.runelite.client.events.ClientShutdown e)
+    {
+        flushQueue(queue);
     }
 
     // ---------- screenshots (kept in memory; uploaded only after server confirms a match) ----------
-
-    /**
-     * Could this event count for an open task on the current board? Only those get a screenshot, so ordinary
-     * drops no longer fill the few screenshot slots before the drop that matters (the server still decides).
-     */
-    private boolean couldCount(GameEvent ev)
-    {
-        ApiModels.BoardResponse b = currentBoard();
-        if (b == null || b.tiles == null) return true;
-        // On more than one board (several bingos on one key): only the selected board is known here, and the drop may
-        // count for another one, so every event gets its picture; it is only sent when the server says it counted.
-        // Finished bingos do not count: only boards that are live right now.
-        if (liveBoards > 1) return true;
-        // finished tiles count too: drops keep counting (with proof) until the bingo is over (owner, 2026-11-11)
-        for (ApiModels.Tile t : b.tiles)
-        {
-            if (t == null || t.tasks == null) continue;
-            for (ApiModels.Task k : t.tasks)
-            {
-                if (k == null) continue;
-                if (k.itemIds != null && !k.itemIds.isEmpty())
-                {
-                    if (ev.items == null) continue;
-                    for (GameEvent.Item it : ev.items) if (k.itemIds.contains(it.itemId)) return true;
-                }
-                else if (k.sourceType != null && k.sourceType.equals(ev.sourceType))
-                {
-                    return true;
-                }
-            }
-        }
-        // secret tiles hide their tasks: their items come as hiddenItemIds
-        if (b.hiddenItemIds != null && ev.items != null)
-        {
-            for (GameEvent.Item it : ev.items) if (b.hiddenItemIds.contains(it.itemId)) return true;
-        }
-        // a secret tile may ask for a kill count, any pet or any clue (no item ids to go on): with one on the board,
-        // those events always get their picture; it is only sent when the server says the event counted (2026-11-22)
-        if (GameEvent.KC.equals(ev.sourceType) || GameEvent.PET.equals(ev.sourceType) || GameEvent.CLUE.equals(ev.sourceType))
-        {
-            for (ApiModels.Tile t : b.tiles) if (t != null && TileInfo.isSecret(t)) return true;
-        }
-        return false;
-    }
 
     private void captureScreenshot(String eventId, long[] delays, boolean chest)
     {
@@ -1967,14 +1974,15 @@ public class ForgeBingoPlugin extends Plugin
         if (client.getGameState() != GameState.LOGGED_IN || bankPinOpen()) return;
         long now = System.currentTimeMillis();
         screenshots.values().removeIf(s -> now - s.at > SCREENSHOT_TTL_MILLIS);
-        // full: drop the oldest instead of skipping this one (the newest drop is the likeliest to count)
-        while (screenshots.size() >= MAX_SCREENSHOTS)
+        // full: drop the oldest instead of skipping this one (the newest drop is the likeliest to count). Pictures
+        // waiting for another try at their upload share the same few slots.
+        while (screenshots.size() + proofRetries.size() >= MAX_SCREENSHOTS)
         {
             String oldest = null;
             long at = Long.MAX_VALUE;
             for (Map.Entry<String, Screenshot> s : screenshots.entrySet()) if (s.getValue().at < at) { at = s.getValue().at; oldest = s.getKey(); }
-            if (oldest == null) break;
-            screenshots.remove(oldest);
+            if (oldest != null) screenshots.remove(oldest);
+            else if (!dropOldestProofRetry()) break;
         }
         // a raid chest opened soon after the chat named us for special loot: that moment goes first
         byte[] before = chest ? raidShot : null;
@@ -1998,32 +2006,12 @@ public class ForgeBingoPlugin extends Plugin
         }
     }
 
-    /**
-     * Milliseconds between spotting a drop or kill and taking its screenshot(s). The loot notice and the "kill count"
-     * chat line arrive in the same game tick as the loot (measured on live Zulrah, Giant Mole, Vorkath and clue
-     * events: 5-34 ms apart), so a picture a moment later shows the loot on the ground and the chat line. A reward
-     * chest's two pictures go up stacked as one image, see ScreenshotStack.
-     */
+    /** How long after an event its screenshot(s) are taken, see {@link ProofPolicy#shotDelays}. */
     static long[] shotDelays(String sourceType, String sourceName, boolean chestWindow)
     {
-        // Two pictures only for reward chests (raids, Barrows, Moons); clues, boss drops and kill counts get one
-        // (owner, 2026-11-14).
-        if (isClue(sourceType, sourceName)) return CLUE_SHOT_DELAYS_MS;
-        return chestWindow ? CHEST_SHOT_DELAYS_MS : SINGLE_SHOT_DELAYS_MS;
+        return ProofPolicy.shotDelays(sourceType, sourceName, chestWindow);
     }
-    /** one picture of a drop or kill: a tick on, so the loot is drawn on the ground before it can be picked up */
-    static final long[] SINGLE_SHOT_DELAYS_MS = {600};
 
-    /** a clue casket's loot, or the "You have completed N ... Treasure Trails" count that comes with it */
-    static boolean isClue(String sourceType, String sourceName)
-    {
-        return GameEvent.CLUE.equals(sourceType)
-            || (GameEvent.KC.equals(sourceType) && sourceName != null && sourceName.toLowerCase(java.util.Locale.ROOT).startsWith("clue scroll"));
-    }
-    /** one picture of the clue reward window, once it has drawn */
-    static final long[] CLUE_SHOT_DELAYS_MS = {600};
-    /** A reward chest's loot window: once as it opens and again a little later (sent as "1 of 2" and "2 of 2"). */
-    private static final long[] CHEST_SHOT_DELAYS_MS = {300, 1800};
     /** minimum time between "Send screenshot" proofs */
     private static final long SCREENSHOT_COOLDOWN_MS = 5000;
     private volatile long lastProofShotAt;
@@ -2191,7 +2179,7 @@ public class ForgeBingoPlugin extends Plugin
             notice("Wait " + ((SCREENSHOT_COOLDOWN_MS - since + 999) / 1000) + "s before the next screenshot.", true);
             return;
         }
-        String team = teamBoardId != null && !teamBoardId.isEmpty() ? teamBoardId : config.activeBoardId();
+        String team = teamBoardId != null && !teamBoardId.isEmpty() ? teamBoardId : shownBoardId();
         ApiClient a = api;
         if (taskId == null || team == null || team.isEmpty() || a == null || !a.configured())
         {
@@ -2266,8 +2254,7 @@ public class ForgeBingoPlugin extends Plugin
     /** The bank PIN keypad (interface group 213) is showing. */
     private boolean bankPinOpen()
     {
-        net.runelite.api.widgets.Widget pin = client.getWidget(BANK_PIN_GROUP, 0);
-        return pin != null && !pin.isHidden();
+        return widgetShowing(BANK_PIN_GROUP);
     }
 
     private static final int BANK_PIN_GROUP = 213;
@@ -2350,54 +2337,20 @@ public class ForgeBingoPlugin extends Plugin
         List<Integer> shots = new ArrayList<>();
         for (int i = 0; i < s.raw.length; i++) if (s.raw[i] != null && s.taken[i] != null) shots.add(i);
         if (shots.isEmpty()) return;
-        // One upload per team, attached to that team's submissions from matched[].submissionId.
-        Map<String, List<String>> byTeam = new java.util.LinkedHashMap<>();
-        // the file is named after the (first) task this drop counted for, e.g. big-boners_3f2a9c1e.png
-        Map<String, String> labels = new java.util.HashMap<>();
-        Map<String, String> taskNames = new java.util.HashMap<>();
-        ApiModels.BoardResponse cb = currentBoard();
-        if (cb != null && cb.tiles != null)
-        {
-            for (ApiModels.Tile t : cb.tiles)
-            {
-                if (t != null && t.tasks != null) for (ApiModels.Task k : t.tasks) if (k != null && k.id != null) taskNames.put(k.id, k.description);
-            }
-        }
-        for (ApiModels.Match m : result.matched)
-        {
-            if (m.teamId == null || m.submissionId == null) continue;
-            byTeam.computeIfAbsent(m.teamId, k -> new ArrayList<>());
-            List<String> ids = byTeam.get(m.teamId);
-            if (!ids.contains(m.submissionId) && ids.size() < 25) ids.add(m.submissionId);
-            String name = m.taskId == null ? null : taskNames.get(m.taskId);
-            if (name == null || name.isEmpty()) name = m.tileId == null ? null : tileTitles.get(m.tileId);
-            if (name != null && !name.isEmpty()) labels.putIfAbsent(m.teamId, name);
-        }
-        // tiles this drop counted for, per team (a player can be on several teams in different bingos at once)
-        Map<String, List<String>> tilesByTeam = new java.util.HashMap<>();
-        for (ApiModels.Match m : result.matched)
-        {
-            if (m.teamId != null && m.tileId != null) tilesByTeam.computeIfAbsent(m.teamId, k -> new ArrayList<>()).add(m.tileId);
-        }
-        for (Map.Entry<String, List<String>> t : byTeam.entrySet())
+        // One upload per team, attached to that team's submissions from matched[].submissionId; the file is named
+        // after the (first) task this drop counted for, e.g. big-boners_3f2a9c1e.png
+        Map<String, String> titles = tileTitles;
+        for (ProofPlan.Team t : ProofPlan.teams(result.matched, MatchNotices.taskNames(currentBoard()), titles))
         {
             try
             {
                 // that team's own board: its bingo's code word and the names of the tiles the drop counted for
                 ApiClient a = api;
                 if (a == null) return; // the plugin was switched off meanwhile
-                ApiResult<ApiModels.BoardResponse> br = a.board(t.getKey());
+                ApiResult<ApiModels.BoardResponse> br = a.board(t.teamId);
                 ApiModels.BoardResponse tb = br.ok() ? br.body : null;
                 String kw = tb != null && tb.event != null ? tb.event.keyword : null;
-                List<String> names = new ArrayList<>();
-                for (String tileId : tilesByTeam.getOrDefault(t.getKey(), java.util.Collections.emptyList()))
-                {
-                    String title = null;
-                    if (tb != null && tb.tiles != null) for (ApiModels.Tile x : tb.tiles) if (x != null && tileId.equals(x.id)) { title = TileInfo.shownTitle(x); break; }
-                    if (title == null) title = tileTitles.get(tileId);
-                    if (title != null && !title.isEmpty() && !names.contains(title)) names.add(title);
-                }
-                String tiles = names.isEmpty() ? null : names.size() <= 2 ? String.join(", ", names) : names.get(0) + ", " + names.get(1) + " +" + (names.size() - 2);
+                String tiles = ProofPlan.tiles(t.tileIds, tb, titles);
                 // Several frames of one drop go up as ONE picture, stacked top to bottom in the order taken
                 // (owner, 2026-11-14). Each frame keeps its own stamp: its time and which it is ("1 of 2").
                 List<BufferedImage> frames = new ArrayList<>();
@@ -2405,11 +2358,9 @@ public class ForgeBingoPlugin extends Plugin
                 for (int n = 0; n < shots.size(); n++)
                 {
                     int i = shots.get(n);
-                    String part = shots.size() > 1 ? (n + 1) + " of " + shots.size() : null;
-                    String stampTile = part == null ? tiles : tiles == null ? part : tiles + " (" + part + ")";
                     BufferedImage img = ImageIO.read(new java.io.ByteArrayInputStream(s.raw[i]));
                     if (img == null) continue;
-                    frames.add(ScreenshotStamp.stamp(img, kw, s.taken[i], s.player, stampTile));
+                    frames.add(ScreenshotStamp.stamp(img, kw, s.taken[i], s.player, ProofPlan.stampText(tiles, n + 1, shots.size())));
                     if (first == null) first = s.taken[i];
                 }
                 BufferedImage stacked = ScreenshotStack.vertical(frames);
@@ -2422,22 +2373,102 @@ public class ForgeBingoPlugin extends Plugin
                     if (stamped == null) continue;
                 }
                 String capturedAt = first.withZoneSameInstant(java.time.ZoneOffset.UTC).toInstant().toString();
-                ApiResult<ApiModels.ProofResponse> r = a.uploadProof(t.getKey(), stamped, t.getValue(), kw, capturedAt, labels.get(t.getKey()));
-                if (!r.ok())
-                {
-                    notice("Screenshot upload failed: " + r.describe(), true);
-                }
-                else
-                {
-                    activity.pictureSent(event.id);
-                    showActivity();
-                }
+                sendProof(new ProofUpload(event.id, t.teamId, stamped, t.submissionIds, kw, capturedAt, t.label, s.at), 1);
             }
             catch (java.io.IOException ex)
             {
                 log.debug("screenshot stamp failed", ex);
             }
         }
+    }
+
+    /** One team's finished (stamped) proof picture, on its way to the server. */
+    private static final class ProofUpload
+    {
+        final String eventId;
+        final String team;
+        final byte[] picture;
+        final List<String> submissionIds;
+        final String keyword;
+        final String capturedAt;
+        final String label;
+        /** when the drop's screenshot was started: the picture is given up with the other screenshots' time limit */
+        final long shotAt;
+
+        ProofUpload(String eventId, String team, byte[] picture, List<String> submissionIds, String keyword, String capturedAt, String label, long shotAt)
+        {
+            this.eventId = eventId;
+            this.team = team;
+            this.picture = picture;
+            this.submissionIds = submissionIds;
+            this.keyword = keyword;
+            this.capturedAt = capturedAt;
+            this.label = label;
+            this.shotAt = shotAt;
+        }
+    }
+
+    /**
+     * Proof pictures waiting for another try after the server was busy or unreachable. They count towards the same
+     * MAX_SCREENSHOTS slots as screenshots waiting for the server's answer.
+     */
+    private final Map<Long, ProofUpload> proofRetries = new ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicLong proofRetryIds = new java.util.concurrent.atomic.AtomicLong();
+
+    /**
+     * Sends one team's proof picture. When the server is busy (429), unreachable or failing (5xx), the same picture
+     * is sent again a little later, a few times, instead of being lost; an answer that will not change (the board
+     * is gone, the bingo is not open, the entry was already reviewed...) is not retried. The player is told once,
+     * only when the picture is finally given up. Worker thread.
+     */
+    private void sendProof(ProofUpload u, int attempt)
+    {
+        ApiClient a = api;
+        if (!running || a == null) return; // the plugin was switched off meanwhile
+        ApiResult<ApiModels.ProofResponse> r = a.uploadProof(u.team, u.picture, u.submissionIds, u.keyword, u.capturedAt, u.label);
+        if (r.ok())
+        {
+            activity.pictureSent(u.eventId);
+            showActivity();
+            return;
+        }
+        long delay = ProofPlan.retryDelay(r.status, r.errorCode, r.retryAfterMillis, attempt, System.currentTimeMillis() - u.shotAt, SCREENSHOT_TTL_MILLIS);
+        // kept for another try only while there is room: waiting pictures share the screenshots' few slots
+        if (delay >= 0 && screenshots.size() + proofRetries.size() < MAX_SCREENSHOTS)
+        {
+            long id = proofRetryIds.incrementAndGet();
+            proofRetries.put(id, u);
+            log.debug("proof upload failed ({}), try {} of {} in {} ms", r.describe(), attempt + 1, ProofPlan.UPLOAD_TRIES, delay);
+            executor.schedule(() -> retryProof(id, attempt + 1), delay, TimeUnit.MILLISECONDS);
+            return;
+        }
+        notice("Screenshot upload failed: " + r.describe(), true);
+    }
+
+    private void retryProof(long id, int attempt)
+    {
+        // gone when a newer drop needed its slot, or the plugin was switched off
+        ProofUpload u = proofRetries.remove(id);
+        if (u == null) return;
+        try
+        {
+            sendProof(u, attempt);
+        }
+        catch (RuntimeException ex)
+        {
+            log.debug("proof upload retry failed", ex);
+        }
+    }
+
+    /** Gives up the oldest picture waiting for another upload try, to make room. @return false when none waits */
+    private boolean dropOldestProofRetry()
+    {
+        Long oldest = null;
+        long at = Long.MAX_VALUE;
+        for (Map.Entry<Long, ProofUpload> r : proofRetries.entrySet()) if (r.getValue().shotAt < at) { at = r.getValue().shotAt; oldest = r.getKey(); }
+        if (oldest == null) return false;
+        if (proofRetries.remove(oldest) != null) notice("Screenshot upload failed: the server stayed busy and newer drops needed the room.", true);
+        return true;
     }
 
     // ---------- user-visible notices ----------
@@ -2474,107 +2505,36 @@ public class ForgeBingoPlugin extends Plugin
             automationNoticeShown = false;
             // the pictures of a raid's chest also go to the tiles its completion just counted for
             ApiModels.EventResult proofFor = result;
-            if (result != null && !result.duplicate && GameEvent.RAID_CHEST.equals(event.sourceType) && raidWithChest(event.sourceName))
+            if (result != null && !result.duplicate && GameEvent.RAID_CHEST.equals(event.sourceType) && ProofPolicy.raidWithChest(event.sourceName))
             {
-                ApiModels.EventResult kc = freshRaidKc();
-                if (kc != null && kc.matched != null)
-                {
-                    ApiModels.EventResult both = new ApiModels.EventResult();
-                    both.eventId = result.eventId;
-                    both.matched = new ArrayList<>();
-                    if (result.matched != null) both.matched.addAll(result.matched);
-                    both.matched.addAll(kc.matched);
-                    proofFor = both;
-                }
+                proofFor = ProofPlan.withRaidKill(result, freshRaidKc());
             }
-            if (result != null && result.isMatched() && !result.duplicate && GameEvent.KC.equals(event.sourceType) && raidWithChest(event.sourceName))
+            if (result != null && result.isMatched() && !result.duplicate && GameEvent.KC.equals(event.sourceType) && ProofPolicy.raidWithChest(event.sourceName))
             {
                 raidKcResult = result;
                 raidKcAt = System.currentTimeMillis();
             }
             if (result != null && result.isMatched() && !result.duplicate)
             {
-                // tiles that were already finished before this drop: it still counts, but no second celebration
-                // what was already finished before this drop (no second celebration), and task names for the messages
-                java.util.Set<String> wasDone = new java.util.HashSet<>();
-                java.util.Set<String> taskWasDone = new java.util.HashSet<>();
-                Map<String, String> taskNames = new java.util.HashMap<>();
-                ApiModels.BoardResponse before = currentBoard();
-                if (before != null && before.tiles != null)
-                {
-                    for (ApiModels.Tile t : before.tiles)
-                    {
-                        if (t == null) continue;
-                        if (t.completed && t.id != null) wasDone.add(t.id);
-                        if (t.tasks != null) for (ApiModels.Task k : t.tasks)
-                        {
-                            if (k == null || k.id == null) continue;
-                            if (k.completed) taskWasDone.add(k.id);
-                            taskNames.put(k.id, k.description);
-                        }
-                    }
-                }
+                // what to say (core/MatchNotices): tiles already finished before this drop still count, but get no
+                // second celebration; a hidden secret tile never shows its amounts
+                MatchNotices.Plan plan = MatchNotices.plan(result, currentBoard(), tileTitles, hiddenTiles);
                 // one quiet line in the side panel: what just counted
-                java.util.Set<String> counted = new java.util.LinkedHashSet<>();
-                for (ApiModels.Match m : result.matched)
+                if (plan.counted != null)
                 {
-                    if (m == null) continue;
-                    String n = m.taskId == null ? null : taskNames.get(m.taskId);
-                    if (n == null || n.isEmpty()) n = m.tileId == null ? null : tileTitles.get(m.tileId);
-                    if (n != null && !n.isEmpty()) counted.add(n);
-                }
-                if (!counted.isEmpty())
-                {
-                    List<String> names = new ArrayList<>(counted);
-                    String what = names.size() <= 2 ? String.join(", ", names) : names.get(0) + ", " + names.get(1) + " +" + (names.size() - 2);
-                    activity.counted(event.id, what, System.currentTimeMillis());
+                    activity.counted(event.id, plan.counted, System.currentTimeMillis());
                     showActivity();
                 }
-                // a match's "completed" is its TASK; the tile is finished when matchedTiles says so
-                java.util.Set<String> tileNowDone = new java.util.HashSet<>();
-                if (result.matchedTiles != null)
+                for (MatchNotices.Notice n : plan.notices)
                 {
-                    for (ApiModels.MatchedTile mt : result.matchedTiles) if (mt != null && mt.completed && mt.tileId != null) tileNowDone.add(mt.tileId);
-                }
-                java.util.Set<String> announced = new java.util.HashSet<>();
-                for (ApiModels.Match m : result.matched)
-                {
-                    String title = m.tileId == null ? null : tileTitles.get(m.tileId);
-                    // the server leaves out which hidden secret tile it was (review, 2026-11-22)
-                    String tileName = title != null ? title : m.tileId == null ? "a secret tile" : "a tile";
-                    String state = "approved".equals(m.status) ? ""
-                        : Boolean.FALSE.equals(m.verified) ? " - waiting for review (your name isn't verified yet)" : " - waiting for review";
-                    if (m.tileId != null && wasDone.contains(m.tileId))
-                    {
-                        notice("Extra drop logged for " + tileName + " (already done)" + state, config.chatNotices());
-                        continue;
-                    }
-                    // a hidden secret tile's amount would hint at its task: only its name shows
-                    boolean hiddenTile = m.tileId != null && hiddenTiles.contains(m.tileId);
-                    String progress = !hiddenTile && m.requiredQuantity > 0 ? " (" + Math.min(m.currentQuantity, m.requiredQuantity) + "/" + m.requiredQuantity + ")" : "";
-                    if (m.tileId != null && tileNowDone.contains(m.tileId))
-                    {
-                        if (announced.add("tile:" + m.tileId)) notice("Tile complete: " + tileName + state, config.chatNotices());
-                    }
-                    else if (m.completed && m.taskId != null && !taskWasDone.contains(m.taskId))
-                    {
-                        String task = taskNames.get(m.taskId);
-                        String what = task == null || task.isEmpty() ? tileName : task + " (" + tileName + ")";
-                        if (announced.add("task:" + m.taskId))
-                        {
-                            notice("Task complete: " + what + state, config.chatNotices());
-                            if (config.effects()) effects.push(EffectsOverlay.Kind.TASK, task == null || task.isEmpty() ? tileName : task);
-                        }
-                    }
-                    else
-                    {
-                        notice("Counted: " + tileName + progress + state, config.chatNotices());
-                    }
+                    notice(n.text, config.chatNotices());
+                    if (n.taskEffect != null && config.effects()) effects.push(EffectsOverlay.Kind.TASK, n.taskEffect);
                 }
                 maybeUploadScreenshot(event, proofFor);
-                for (String tileId : tileNowDone)
+                // celebrated on the tile's own team board (the server names it), else the board on screen
+                for (MatchNotices.Celebration c : plan.celebrations)
                 {
-                    if (!wasDone.contains(tileId)) celebrateTile(config.activeBoardId(), tileId, tileTitles.get(tileId));
+                    celebrateTile(c.teamBoardId != null ? c.teamBoardId : shownBoardId(), c.tileId, c.title);
                 }
                 boardVersions.clear();
                 executor.execute(ForgeBingoPlugin.this::pollBoardSafely);

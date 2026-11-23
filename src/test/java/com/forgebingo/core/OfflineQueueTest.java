@@ -83,6 +83,109 @@ public class OfflineQueueTest
         assertEquals(0, q.size());
     }
 
+    // --- deferred saves (the plugin's mode: events are added on the game thread, the worker writes the file) ---
+
+    @Test
+    public void deferredAddWritesNothingUntilFlushed() throws IOException
+    {
+        Path f = tmp.getRoot().toPath().resolve("forgebingo").resolve("queue.json");
+        OfflineQueue q = new OfflineQueue(TestFiles.fp(f), gson, true);
+        q.add(new QueuedEvent(event("a"), 1000));
+        q.add(new QueuedEvent(event("b"), 1000));
+        // in memory at once, so the send that follows sees them
+        assertEquals(2, q.size());
+        assertEquals(2, q.due(1000).size());
+        assertTrue(q.unsaved());
+        assertFalse(Files.exists(f));
+
+        assertTrue(q.flush());
+        assertFalse(q.unsaved());
+        OfflineQueue reloaded = new OfflineQueue(TestFiles.fp(f), gson);
+        reloaded.load();
+        assertEquals(2, reloaded.size());
+        assertEquals("a", reloaded.due(1000).get(0).event.id);
+    }
+
+    @Test
+    public void deferredFlushWritesOnceForManyChangesAndNotAtAllForNone() throws IOException
+    {
+        Path f = tmp.getRoot().toPath().resolve("queue.json");
+        OfflineQueue q = new OfflineQueue(TestFiles.fp(f), gson, true);
+        for (int i = 0; i < 5; i++) q.add(new QueuedEvent(event("e" + i), 1000));
+        assertTrue(q.flush());
+        // nothing changed since: the file is left alone (deleted here to see that it is not written again)
+        Files.delete(f);
+        assertFalse(q.flush());
+        assertFalse(Files.exists(f));
+
+        // a drain's worth of changes (two sent, one to retry) is one write
+        q.remove("e0");
+        q.remove("e1");
+        q.scheduleRetry("e2", 1, 99_000, "HTTP 503");
+        assertFalse(Files.exists(f));
+        assertTrue(q.flush());
+        OfflineQueue reloaded = new OfflineQueue(TestFiles.fp(f), gson);
+        reloaded.load();
+        assertEquals(3, reloaded.size());
+        assertEquals("HTTP 503", reloaded.due(99_000).get(0).lastError);
+    }
+
+    @Test
+    public void deferredRemoveOfAnUnknownEventIsNotAChange() throws IOException
+    {
+        OfflineQueue q = new OfflineQueue(TestFiles.fp(tmp.getRoot().toPath().resolve("queue.json")), gson, true);
+        q.remove("nope");
+        q.scheduleRetry("nope", 1, 5, "x");
+        assertTrue(q.expire(5).isEmpty());
+        assertFalse(q.unsaved());
+        assertFalse(q.flush());
+    }
+
+    @Test
+    public void anEventSentBeforeItsRemovalWasSavedIsStillOnDiskAfterACrash() throws IOException
+    {
+        // deferred mode's order of risk: the file may still hold an event the server already took (it is sent again
+        // after a restart and the server answers "duplicate"), never the other way round
+        Path f = tmp.getRoot().toPath().resolve("queue.json");
+        OfflineQueue q = new OfflineQueue(TestFiles.fp(f), gson, true);
+        q.add(new QueuedEvent(event("a"), 1000));
+        q.flush();
+        q.remove("a"); // accepted by the server; the "crash" comes before the next flush
+        OfflineQueue afterCrash = new OfflineQueue(TestFiles.fp(f), gson);
+        afterCrash.load();
+        assertEquals(1, afterCrash.size());
+    }
+
+    @Test
+    public void theWriteOnEveryChangeModeIgnoresFlush() throws IOException
+    {
+        Path f = tmp.getRoot().toPath().resolve("queue.json");
+        OfflineQueue q = new OfflineQueue(TestFiles.fp(f), gson);
+        q.add(new QueuedEvent(event("a"), 1000));
+        assertTrue(Files.exists(f));
+        assertFalse(q.unsaved());
+        assertFalse(q.flush());
+    }
+
+    @Test
+    public void processorDrainOnADeferredQueueLeavesOneFlushToDo() throws IOException
+    {
+        Path f = tmp.getRoot().toPath().resolve("queue.json");
+        OfflineQueue q = new OfflineQueue(TestFiles.fp(f), gson, true);
+        q.add(new QueuedEvent(event("ok1"), 1000));
+        q.add(new QueuedEvent(event("ok2"), 1000));
+        q.flush();
+        Recorder rec = new Recorder();
+        QueueProcessor p = new QueueProcessor(q, e -> result(200), rec, () -> 2000, new Random(0));
+        assertEquals(-1, p.drain());
+        assertEquals(2, rec.accepted.size());
+        assertTrue(q.unsaved());
+        assertTrue(q.flush());
+        OfflineQueue reloaded = new OfflineQueue(TestFiles.fp(f), gson);
+        reloaded.load();
+        assertEquals(0, reloaded.size());
+    }
+
     // --- processor ---
 
     private static final class Recorder implements QueueProcessor.Listener
