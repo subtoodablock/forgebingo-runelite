@@ -203,6 +203,29 @@ public class ActivityWatcherTest
         assertTrue(w.flush(201, false).isEmpty());
     }
 
+    /** Sold to a general store and bought back (or bought after another player sold it): the shop's stock went down. */
+    @Test
+    public void buyingBackFromAShopNeverCounts()
+    {
+        ActivityWatcher w = new ActivityWatcher();
+        w.onItemsLeftInventory(240);               // sold to the shop
+        assertTrue(w.flush(241, false).isEmpty());
+        w.onLeftContainer(FIGHTER_TORSO, 250);     // the shop's stock of it drops as it is bought back
+        w.onInventoryAdded(FIGHTER_TORSO, 1, 250);
+        assertTrue(w.flush(251, false).isEmpty());
+    }
+
+    /** Collected from the Grand Exchange while its window is open, even when the offer itself reports no change. */
+    @Test
+    public void collectingWithTheGrandExchangeOpenNeverCounts()
+    {
+        ActivityWatcher w = new ActivityWatcher();
+        w.onGrandExchange(260);
+        w.onGrandExchange(261);
+        w.onInventoryAdded(FIGHTER_TORSO, 1, 261);
+        assertTrue(w.flush(262, false).isEmpty());
+    }
+
     @Test
     public void groundPickupsNeverCount()
     {

@@ -1128,7 +1128,9 @@ public class ForgeBingoPlugin extends Plugin
     public void onItemSpawned(net.runelite.api.events.ItemSpawned e)
     {
         TileItem item = e.getItem();
-        if (item != null && e.getTile() != null && item.getOwnership() == TileItem.OWNERSHIP_OTHER)
+        // another player's item, or one a group ironman teammate put down (those show to the group at once)
+        if (item != null && e.getTile() != null
+            && (item.getOwnership() == TileItem.OWNERSHIP_OTHER || item.getOwnership() == TileItem.OWNERSHIP_GROUP))
         {
             net.runelite.api.coords.WorldPoint w = e.getTile().getWorldLocation();
             groundGuard.onForeignItem(itemManager.canonicalize(item.getId()), client.getTickCount(), w.getX(), w.getY(), w.getPlane());
@@ -1521,6 +1523,31 @@ public class ForgeBingoPlugin extends Plugin
     }
 
     /** Wilderness (varbit 5963) or a PvP / Deadman world: nothing from the backpack watcher counts there. */
+    /** the map squares player-owned houses are built in */
+    private static final Set<Integer> HOUSE_REGIONS = new HashSet<>(java.util.Arrays.asList(7257, 7513, 7514, 7769, 7770, 8025, 8026));
+    /** interface groups: the Grand Exchange offers window and the collection box */
+    private static final int GE_OFFERS_GROUP = 465;
+    private static final int GE_COLLECT_GROUP = 402;
+
+    /** The player is inside a player-owned house. */
+    private boolean inHouse()
+    {
+        Player me = client.getLocalPlayer();
+        if (me == null || me.getLocalLocation() == null) return false;
+        WorldPoint w = WorldPoint.fromLocalInstance(client, me.getLocalLocation());
+        return w != null && HOUSE_REGIONS.contains(w.getRegionID());
+    }
+
+    private boolean grandExchangeOpen()
+    {
+        for (int group : new int[] {GE_OFFERS_GROUP, GE_COLLECT_GROUP})
+        {
+            net.runelite.api.widgets.Widget w = client.getWidget(group, 0);
+            if (w != null && !w.isHidden()) return true;
+        }
+        return false;
+    }
+
     private boolean inPvp()
     {
         if (client.getVarbitValue(5963) == 1) return true;
@@ -1716,7 +1743,12 @@ public class ForgeBingoPlugin extends Plugin
         }
         // the death moment is over: what the player still has was kept, not waiting to come back
         if (activityWatcher.wantsHoldingsAfterDeath(tick, instance)) activityWatcher.onHoldingsAfterDeath(holdings(), System.currentTimeMillis());
-        List<ActivityWatcher.Drop> drops = activityWatcher.flush(tick, inPvp(), System.currentTimeMillis());
+        // items taken out of a Grand Exchange offer or the collection box were bought, not earned: a part-filled
+        // offer does not always report a change when it is collected, so the open window itself is the signal
+        if (grandExchangeOpen()) activityWatcher.onGrandExchange(tick);
+        // nothing is earned inside a player's house: gear taken out of its costume room and cape rack is the
+        // player's own (those are not item containers, so nothing else tells it apart from a reward)
+        List<ActivityWatcher.Drop> drops = activityWatcher.flush(tick, inPvp() || inHouse(), System.currentTimeMillis());
         if (activityWatcher.deathMemoryChanged()) saveDeathMemory();
         for (ActivityWatcher.Drop d : drops)
         {
