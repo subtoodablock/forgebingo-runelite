@@ -190,6 +190,8 @@ public class ForgeBingoPlugin extends Plugin
     private volatile java.util.Set<String> helloEvents;
     /** boards the last list had (null until the first list), to spot one that just opened (shared reveal) */
     private volatile java.util.Set<String> knownBoards;
+    /** how many of the player's boards are live right now (a drop can count for one that is not selected) */
+    private volatile int liveBoards;
 
     /**
      * A drop screenshot waiting for the server's answer. Kept unstamped: one drop can count for several teams in
@@ -885,7 +887,13 @@ public class ForgeBingoPlugin extends Plugin
         // Shared reveal: a board that appears while we're running has just opened for everyone (the bingo started).
         // Switch to it, say so in chat and open it over the game with a Legendary animation.
         java.util.Set<String> ids = new java.util.HashSet<>();
-        for (ApiModels.BoardSummary b : boards) ids.add(b.teamBoardId);
+        int live = 0;
+        for (ApiModels.BoardSummary b : boards)
+        {
+            ids.add(b.teamBoardId);
+            if (b.active) live++;
+        }
+        liveBoards = live;
         java.util.Set<String> before = knownBoards;
         knownBoards = ids;
         if (before != null)
@@ -1846,8 +1854,8 @@ public class ForgeBingoPlugin extends Plugin
         if (b == null || b.tiles == null) return true;
         // On more than one board (several bingos on one key): only the selected board is known here, and the drop may
         // count for another one, so every event gets its picture; it is only sent when the server says it counted.
-        java.util.Set<String> boards = knownBoards;
-        if (boards != null && boards.size() > 1) return true;
+        // Finished bingos do not count: only boards that are live right now.
+        if (liveBoards > 1) return true;
         // finished tiles count too: drops keep counting (with proof) until the bingo is over (owner, 2026-11-11)
         for (ApiModels.Tile t : b.tiles)
         {
