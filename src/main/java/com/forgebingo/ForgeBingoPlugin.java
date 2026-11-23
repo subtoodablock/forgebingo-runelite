@@ -2333,7 +2333,8 @@ public class ForgeBingoPlugin extends Plugin
                 for (ApiModels.Match m : result.matched)
                 {
                     String title = m.tileId == null ? null : tileTitles.get(m.tileId);
-                    String tileName = title == null ? "a tile" : title;
+                    // the server leaves out which hidden secret tile it was (review, 2026-11-22)
+                    String tileName = title != null ? title : m.tileId == null ? "a secret tile" : "a tile";
                     String state = "approved".equals(m.status) ? ""
                         : Boolean.FALSE.equals(m.verified) ? " - waiting for review (your name isn't verified yet)" : " - waiting for review";
                     if (m.tileId != null && wasDone.contains(m.tileId))
@@ -2392,7 +2393,16 @@ public class ForgeBingoPlugin extends Plugin
         public void onDropped(GameEvent event, String reason)
         {
             screenshots.remove(event.id);
-            notice("Dropped " + event.sourceType + " event (" + event.label() + "): " + reason, true);
+            if (reason != null && (reason.contains("too old") || reason.contains("occurred_outside_event")))
+            {
+                // review, 2026-11-22: say what to do, not just that it failed
+                notice("Not counted: " + event.label() + " waited too long to send (over 23 hours offline). "
+                    + "Send a screenshot with Send screenshot on the tile, or on the website.", true);
+            }
+            else
+            {
+                notice("Dropped " + event.sourceType + " event (" + event.label() + "): " + reason, true);
+            }
             if (reason != null && reason.contains("not_a_member"))
             {
                 boardVersions.clear();
