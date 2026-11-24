@@ -198,6 +198,12 @@ public final class Sanitizer
                 t.workingOn.removeIf(w -> w == null || w.name == null);
                 for (ApiModels.WorkingOn w : t.workingOn) w.name = str(w.name).length() > 32 ? str(w.name).substring(0, 32) : str(w.name);
             }
+            if (t.contributors != null)
+            {
+                t.contributors = cap(t.contributors, 12);
+                t.contributors.removeIf(c -> c == null || c.name == null || c.qty <= 0);
+                for (ApiModels.Contributor c : t.contributors) c.name = str(c.name).length() > 32 ? str(c.name).substring(0, 32) : str(c.name);
+            }
         }
         if (b.event != null)
         {

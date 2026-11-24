@@ -962,6 +962,24 @@ class ForgeBingoPanel extends PluginPanel
         {
             detail.add(left(cardText("Working on it: " + workingNames(t), GOLD)));
         }
+        // FINISHED BY (owner, 2026-11-23: the finished card was mostly empty): who earned the tile and how much of
+        // theirs counted, most first, then when it was finished
+        if (t.completed && !secret)
+        {
+            if (t.contributors != null && !t.contributors.isEmpty())
+            {
+                detail.add(gap(8));
+                detail.add(left(smallCaps("Finished by")));
+                detail.add(gap(4));
+                detail.add(finishedByBox(t));
+            }
+            String when = TileInfo.finishedAgo(t.completedAt, System.currentTimeMillis());
+            if (when != null && !TileInfo.isFree(t))
+            {
+                detail.add(gap(4));
+                detail.add(left(cardText(when, MUTED)));
+            }
+        }
         // REQUIREMENTS: one box per task, laid out like the website's tile card (owner, 2026-11-11)
         if (!t.tasks.isEmpty())
         {
@@ -1028,7 +1046,8 @@ class ForgeBingoPanel extends PluginPanel
         detail.add(gap(2));
         detail.add(left(smallCaps("Proof")));
         detail.add(gap(3));
-        String proof = t.completed ? "Done - proof accepted."
+        String proof = TileInfo.isFree(t) ? "Free space: no proof needed."
+            : t.completed ? "Done - proof accepted."
             : counted == 0 && waiting == 0 ? "No proof sent yet."
             : (counted > 0 ? counted + " counted" : "") + (counted > 0 && waiting > 0 ? ", " : "") + (waiting > 0 ? waiting + " waiting for review" : "") + ".";
         detail.add(left(cardText(proof, t.completed ? GOOD : waiting > 0 ? WAIT : TEXT)));
@@ -1169,6 +1188,36 @@ class ForgeBingoPanel extends PluginPanel
         return l;
     }
 
+    /** how many teammates the finished card lists before "+N more" */
+    private static final int FINISHED_BY_SHOWN = 6;
+
+    /** The finished card's "Finished by": one row per teammate, name on the left, what counted on the right. */
+    private JPanel finishedByBox(ApiModels.Tile t)
+    {
+        PanelUi.Card box = new PanelUi.Card(null).inset(PanelUi.GREEN_DARK).pad(6, 7, 6, 7);
+        int shown = Math.min(FINISHED_BY_SHOWN, t.contributors.size());
+        for (int i = 0; i < shown; i++)
+        {
+            ApiModels.Contributor c = t.contributors.get(i);
+            JPanel row = new JPanel(new BorderLayout(6, 0));
+            row.setOpaque(false);
+            row.setBorder(BorderFactory.createEmptyBorder(1, 0, 1, 0));
+            JLabel name = new PanelUi.CrispLabel(wrapHtml(c.name + (c.me ? " (you)" : ""), CARD_TEXT - 90));
+            name.setFont(bodyFont());
+            // the teammate who did the most leads the list in gold
+            name.setForeground(i == 0 && t.contributors.size() > 1 ? GOLD : c.me ? new Color(0xf4eee2) : TEXT);
+            row.add(name, BorderLayout.CENTER);
+            JLabel qty = new PanelUi.CrispLabel(TileInfo.contributed(t, c.qty));
+            qty.setFont(smallFont());
+            qty.setForeground(GOOD);
+            qty.setVerticalAlignment(SwingConstants.TOP);
+            row.add(qty, BorderLayout.EAST);
+            box.add(fullWidth(row, -1));
+        }
+        if (t.contributors.size() > shown) box.add(left(cardText("+" + (t.contributors.size() - shown) + " more", MUTED)));
+        return fullWidth(box, -1);
+    }
+
     /** "REQUIREMENTS" / "PROOF": small gold capitals, like the website's section labels. */
     private static JLabel smallCaps(String text)
     {
@@ -1228,17 +1277,22 @@ class ForgeBingoPanel extends PluginPanel
             iconBox.add(tick, BorderLayout.CENTER);
         }
         top.add(iconBox, BorderLayout.WEST);
-        JLabel name = new PanelUi.CrispLabel(wrapHtml(k.description == null || k.description.isEmpty() ? "Task" : k.description, CARD_TEXT - 80));
+        // a finished task shows no count: its green name and full bar say "done", and the name gets the whole width
+        // (the "Done" beside it used to cut the name off, owner 2026-11-23)
+        JLabel name = new PanelUi.CrispLabel(wrapHtml(k.description == null || k.description.isEmpty() ? "Task" : k.description, CARD_TEXT - (done ? 66 : 80)));
         name.setFont(bodyFont());
         name.setForeground(done ? GOOD : new Color(0xf4eee2));
         top.add(name, BorderLayout.CENTER);
         int need = Math.max(1, k.requiredQty);
-        JLabel count = new PanelUi.CrispLabel(done ? "Done" : compact(Math.min(need, k.approvedQty)) + "/" + compact(need));
-        if (need >= 100_000) count.setToolTipText(String.format("%,d / %,d", Math.min(need, k.approvedQty), need));
-        count.setFont(smallFont());
-        count.setForeground(done ? GOOD : MUTED);
-        count.setVerticalAlignment(SwingConstants.TOP);
-        top.add(count, BorderLayout.EAST);
+        if (!done)
+        {
+            JLabel count = new PanelUi.CrispLabel(compact(Math.min(need, k.approvedQty)) + "/" + compact(need));
+            if (need >= 100_000) count.setToolTipText(String.format("%,d / %,d", Math.min(need, k.approvedQty), need));
+            count.setFont(smallFont());
+            count.setForeground(MUTED);
+            count.setVerticalAlignment(SwingConstants.TOP);
+            top.add(count, BorderLayout.EAST);
+        }
         box.add(fullWidth(top, -1));
 
         // thin bar: fills up when the tile is opened, sits still on live refreshes
@@ -1305,7 +1359,8 @@ class ForgeBingoPanel extends PluginPanel
         }
         // the button stays on a finished task too (owner, 2026-11-14): proof can still be sent after it is complete
         {
-            if (!secret && k.id != null)
+            // a free space has nothing to prove: no button there
+            if (!secret && k.id != null && !TileInfo.isFree(t))
             {
                 // RuneLite sends its own proof: a game screenshot straight to this task, waiting for review
                 JButton shot = button("Send screenshot", "Takes a screenshot of the game now and sends it as proof for this task");

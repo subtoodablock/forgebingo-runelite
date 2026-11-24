@@ -19,6 +19,59 @@ public final class TileInfo
     {
     }
 
+    /** A free space: done for every team, with nothing to prove. */
+    public static boolean isFree(ApiModels.Tile t)
+    {
+        return t != null && Boolean.TRUE.equals(t.free);
+    }
+
+    /**
+     * What one teammate's share of a finished tile is called on its card: "14 kills" when every task counts kills,
+     * "3 drops" when every task counts drops or chest loot, otherwise just the number ("x2": screenshots, mixed tiles).
+     */
+    public static String contributed(ApiModels.Tile t, int qty)
+    {
+        boolean kills = t != null && t.tasks != null && !t.tasks.isEmpty();
+        boolean drops = kills;
+        if (t != null && t.tasks != null)
+        {
+            for (ApiModels.Task k : t.tasks)
+            {
+                String st = k == null ? null : k.sourceType;
+                if (!"kc".equals(st)) kills = false;
+                if (!("npc".equals(st) || "raid_chest".equals(st) || "clue".equals(st))) drops = false;
+            }
+        }
+        if (kills) return qty + (qty == 1 ? " kill" : " kills");
+        if (drops) return qty + (qty == 1 ? " drop" : " drops");
+        return "x" + qty;
+    }
+
+    /**
+     * "Finished 2 days ago" for a tile's completedAt (an ISO instant), or null when there is none or it cannot be
+     * read. Under a minute is "just now"; a time in the future (clocks disagree) is "just now" too.
+     */
+    public static String finishedAgo(String completedAt, long nowMillis)
+    {
+        if (completedAt == null || completedAt.isEmpty()) return null;
+        long then;
+        try
+        {
+            then = java.time.OffsetDateTime.parse(completedAt).toInstant().toEpochMilli();
+        }
+        catch (java.time.DateTimeException ex)
+        {
+            return null;
+        }
+        long mins = Math.max(0, (nowMillis - then) / 60_000L);
+        if (mins < 1) return "Finished just now";
+        if (mins < 60) return "Finished " + mins + (mins == 1 ? " minute ago" : " minutes ago");
+        long hours = mins / 60;
+        if (hours < 24) return "Finished " + hours + (hours == 1 ? " hour ago" : " hours ago");
+        long days = hours / 24;
+        return "Finished " + days + (days == 1 ? " day ago" : " days ago");
+    }
+
     /** What a tile is called on screen: a hidden secret tile shows the name its organizer gave it, else "Secret tile". */
     public static String shownTitle(ApiModels.Tile t)
     {

@@ -175,7 +175,21 @@ public final class ApiModels
         public String proofTaskId;
         public boolean completed;
         public String completedAt;
+        /** a free space: done for every team, nothing to prove (null from servers before 2026-11-23) */
+        public Boolean free;
+        /** who earned this tile, most first (null from servers before 2026-11-23; empty on hidden secret tiles) */
+        public List<Contributor> contributors;
         public List<Task> tasks;
+    }
+
+    /** A teammate whose approved proof counted for a tile (the finished card's "Finished by"). */
+    public static final class Contributor
+    {
+        public String name;
+        /** how much of theirs counted: kills, drops or proofs */
+        public int qty;
+        /** true for the player whose key fetched the board */
+        public boolean me;
     }
 
     public static final class BoardEvent
