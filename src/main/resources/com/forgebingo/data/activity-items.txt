@@ -1,0 +1,110 @@
+# ForgeBingo: activity uniques that may reach the backpack without a loot event.
+#
+# Reward-shop purchases (Barbarian Assault, Mage Training Arena, ...), opened containers (Forgotten lockbox,
+# Pyramid Plunder chests, Vale offerings) and raid or minigame rewards the loot tracker may not name.
+# Item id -> activity name the server knows (npc_sources alias). Read by core/ActivityItems.java.
+#
+# Source of the rows: apps/web/src/features/boardgen/data/activities.ts (scripts/boardgen/gen-activities.mjs).
+#
+# Format (strict: anything else is an error and the whole table is refused):
+#   [Activity name]      starts an activity
+#   id id id ...         item ids of that activity, decimal, separated by spaces, on as many lines as you like
+#   # ...                a comment; blank lines are ignored
+# An item id may appear only once in the whole file.
+
+[TzTok-Jad]
+6570
+
+[TzKal-Zuk]
+21295
+
+[The Fractured Archive]
+34428 34719 34727 34679 34681 34717 34722 34675 34673 34671 34677
+
+[Forgotten lockbox]
+30750 30753 30756
+
+[Sailing]
+32115 31961 31946 31949 31959 31952 31954 31420 31428 32087 32090 32093
+32096 32099 32102 32104 32106 32108 32110 32113
+
+[Pyramid Plunder]
+26945 9044
+
+[Fortis Colosseum]
+28933 28936 28939 28947 28919 28942
+
+[Barbarian Assault]
+10548 10550 10547 10549 10551 10555 10552 10553 10564
+
+[Mage Training Arena]
+6922 6918 6916 6924 6920 6908 6910 6912 6914 6889 8015
+
+[Pest Control]
+8841 8839 8840 8842 11663 11664 11665 11666
+
+[Last Man Standing]
+13317 13318 13319 24219 24192 24195 24198 24201 24204 24207 24209 24211
+24213 24215 24520 24619 24287 11941 12791 3105 24229 12849 4207
+
+[Soul Wars]
+25344 25340
+
+[Guardians of the Rift]
+26798 26813 26822 26811 26807 26809 26910 26876 26850 26852 26854 26856
+26815 20665
+
+[Tithe Farm]
+13646 13642 13643 13640 13644 20747 13639 13226 13353
+
+[Volcanic Mine]
+21697 21539
+
+[Mahogany Homes]
+24880 24882 24885 24872 24874 24876 24878
+
+[Giants' Foundry]
+27012 27023 27025 27027 27029 27021
+
+[Castle Wars]
+4071 25165 4069 25163 4072 4068 4513 4514 4037 4039
+
+[Trouble Brewing]
+8959 8960 8961 8962 8963 8964 8965 8966 8967 8968 8969 8970
+8971
+
+[Fishing Trawler]
+13258 13259 13260 13261 22846 22844 22842 22838
+
+[Motherlode Mine]
+12013 12014 12015 12016 12019 12020
+
+[Hallowed Sepulchre]
+24736 24738 24729 24733
+
+[Brimhaven Agility Arena]
+2997 12641
+
+[Rogues' Den]
+5554 5553 5555 5556 5557 21307 5558
+
+[Vale Offerings]
+31052 31043 31034
+
+[Brimstone chest]
+22963 23047 23050 23053 23056 23059
+
+[Doom of Mokhaiotl]
+31088 31115 31109
+
+[Moons of Peril]
+29000 29010 29004 29007 28997 29028 29022 29025 28988 29019 29013 29016
+
+[Enhanced crystal chest]
+6571 24034 24037 24040 24046 24043
+
+[Varlamore tokens]
+29388 29389 29390 29391 29392 29393 29394 29395 29396 29397 29398 29399
+29400 29401 29402 29403 29404 29405 29406 29407 31123 31124 31125 31126
+31127 30113 30114 30115 30116 30117 30118 30119 30120 30121
+

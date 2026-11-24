@@ -7,6 +7,9 @@ import java.util.function.IntUnaryOperator;
  * Shared tools for the side panel's themed pixel-art creatures (the imp has its own older copy in ImpSprite).
  * A creature is drawn on a WIDTH x HEIGHT grid of palette letters, facing LEFT, feet on the bottom row, body centred
  * on column WIDTH / 2, so every creature fits the same walking code.
+ *
+ * Lives in src/test/java since the art was baked into sprite sheets: only the drawing code (PetSpritesA..F,
+ * RaidSprites, CryptSprites, SkillPropArt) uses it now. The plugin itself takes the grid size from ImpSprite.
  */
 public final class PixelArt
 {

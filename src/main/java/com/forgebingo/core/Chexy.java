@@ -919,14 +919,14 @@ public final class Chexy
 
     private static BufferedImage still;
 
-    /** One still frame on the shared creature grid (PixelArt.WIDTH x HEIGHT), for anything that wants a picture. */
+    /** One still frame on the shared creature grid (ImpSprite.WIDTH x HEIGHT), for anything that wants a picture. */
     public static synchronized BufferedImage still()
     {
         if (still == null)
         {
-            BufferedImage img = new BufferedImage(PixelArt.WIDTH, PixelArt.HEIGHT, BufferedImage.TYPE_INT_ARGB);
+            BufferedImage img = new BufferedImage(ImpSprite.WIDTH, ImpSprite.HEIGHT, BufferedImage.TYPE_INT_ARGB);
             Graphics2D g = img.createGraphics();
-            paint(g, PixelArt.WIDTH / 2f, PixelArt.HEIGHT / 2f, 1.3f, Math.min(PixelArt.HEIGHT - 4, SIZE), false);
+            paint(g, ImpSprite.WIDTH / 2f, ImpSprite.HEIGHT / 2f, 1.3f, Math.min(ImpSprite.HEIGHT - 4, SIZE), false);
             g.dispose();
             still = img;
         }

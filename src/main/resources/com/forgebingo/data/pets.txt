@@ -1,0 +1,84 @@
+# ForgeBingo: every pet. Read by core/PetTable.java.
+#
+# In-game item name, item ids (base form first, then metamorph variants) and the follower NPC ids that walk behind
+# the player. Pets are untradeable, so the item search can never resolve them; this table is the plugin's only
+# source for pet ids.
+#
+# Ids come from the RuneLite gameval tables (ItemID / NpcID, follower NPCs only: the house menagerie copies are left
+# out). Sources are lower-case boss / activity names as the plugin sees them in loot, kill count and clue events;
+# they are only used to attribute a duplicate pet, which names no pet at all.
+#
+# Format (strict: anything else is an error and the whole table is refused), one pet per line, four fields:
+#   Name | item ids | follower npc ids | sources
+# ids are decimal, separated by spaces, at least one of each; sources are separated by commas and may be left empty
+# (the last | stays). The order of the lines and of the ids is kept. No name, id or source may belong to two pets.
+# "# ..." is a comment; blank lines are ignored.
+
+Abyssal orphan | 13262 | 5884 | abyssal sire
+Baby mole | 12646 | 6635 | giant mole
+Callisto cub | 13178 27649 | 5558 11986 | callisto, artio
+Hellpuppy | 13247 | 3099 | cerberus
+Kalphite princess | 12647 12654 | 6637 6638 | kalphite queen
+Pet chaos elemental | 11995 | 2055 | chaos elemental, chaos fanatic
+Pet dagannoth prime | 12644 | 6629 | dagannoth prime
+Pet dagannoth rex | 12645 | 6630 | dagannoth rex
+Pet dagannoth supreme | 12643 | 6628 | dagannoth supreme
+Pet dark core | 12816 | 318 8010 | corporeal beast
+Pet general graardor | 12650 | 6632 | general graardor
+Pet k'ril tsutsaroth | 12652 | 6634 | k'ril tsutsaroth
+Pet kraken | 12655 | 6640 | kraken
+Pet kree'arra | 12649 | 6631 | kree'arra
+Pet smoke devil | 12648 22663 | 6639 8483 | thermonuclear smoke devil
+Pet snakeling | 12921 12939 12940 | 2130 2131 2132 | zulrah
+Pet zilyana | 12651 | 6633 | commander zilyana
+Prince black dragon | 12653 | 6636 | king black dragon
+Scorpia's offspring | 13181 | 5561 | scorpia
+Skotos | 21273 | 7671 | skotizo
+Tzrek-jad | 13225 | 5893 | tztok-jad
+Venenatis spiderling | 13177 27648 | 5557 11985 | venenatis, spindel
+Vet'ion jr. | 13179 13180 27650 27651 | 5559 5560 11987 11988 | vet'ion, calvar'ion
+Vorki | 21992 | 8029 | vorkath
+Noon | 21748 21750 | 7892 7893 | grotesque guardians, dusk
+Ikkle hydra | 22746 22748 22750 22752 | 8492 8493 8494 8495 | alchemical hydra
+Sraracha | 23495 25842 25843 | 2144 11159 11160 | sarachnis
+Olmlet | 20851 | 7520 | chambers of xeric, chambers of xeric challenge mode
+Lil' zik | 22473 | 8337 | theatre of blood, theatre of blood: hard mode, theatre of blood: entry mode
+Little nightmare | 24491 | 9399 | the nightmare, nightmare, phosani's nightmare
+Jal-nib-rek | 21291 | 7675 | tzkal-zuk
+Youngllef | 23757 23759 | 8737 8738 | the gauntlet, gauntlet, corrupted gauntlet, the corrupted gauntlet
+Smolcano | 23760 | 8739 | zalcano
+Tiny tempor | 25602 | 10637 | tempoross
+Nexling | 26348 | 11277 | nex
+Abyssal protector | 26901 | 11429 | guardians of the rift
+Tumeken's guardian | 27352 | 11812 | tombs of amascut, tombs of amascut: expert mode, tombs of amascut: entry mode
+Muphin | 27590 27592 27593 | 12014 12015 12016 | phantom muspah
+Wisp | 28246 | 12157 | the whisperer, whisperer
+Butch | 28248 | 12158 | vardorvis
+Baron | 28250 | 12159 | duke sucellus
+Lil'viathan | 28252 | 12160 | the leviathan, leviathan
+Scurry | 28801 | 7616 | scurrius
+Smol heredit | 28960 | 12857 | fortis colosseum, sol heredit
+Quetzin | 28962 | 12858 |
+Nid | 29836 | 13683 | araxxor
+Huberte | 30152 | 14045 | the hueycoatl, hueycoatl
+Moxi | 30154 | 14046 | amoxliatl
+Bran | 30622 | 12593 | the royal titans, royal titans, branda the fire queen, eldric the ice king
+Yami | 30888 | 14204 | yama
+Dom | 31130 | 14785 | doom of mokhaiotl
+Heron | 13320 | 6722 |
+Rock golem | 13321 21187 21188 21189 21190 21191 21192 21193 21194 21195 21196 21197 21340 21358 21359 21360 31276 31277 31278 | 7451 7452 7453 7454 7455 7642 7643 7644 7645 7646 7647 7648 7711 7739 7740 7741 14923 14924 14925 |
+Beaver | 13322 28229 28230 28231 28232 28233 28234 28235 28236 28237 31279 31280 31281 31282 | 12181 12182 12183 12184 12185 12186 12187 12188 12189 12190 14926 14927 14928 14929 |
+Baby chinchompa | 13323 13324 13325 13326 | 6756 6757 6758 6759 |
+Giant squirrel | 20659 | 7351 |
+Tangleroot | 20661 24555 24557 24559 24561 24563 | 7352 9497 9498 9499 9500 9501 |
+Rocky | 20663 | 7353 |
+Rift guardian | 20665 20667 20669 20671 20673 20675 20677 20679 20681 20683 20685 20687 20689 20691 21990 | 7354 7355 7356 7357 7358 7359 7360 7361 7362 7363 7364 7365 7366 7367 8028 |
+Phoenix | 20693 24483 24484 24485 24486 | 3081 3082 3083 3084 7370 | wintertodt
+Herbi | 21509 | 7760 | herbiboar
+Chompy chick | 13071 | 4002 |
+Pet penance queen | 12703 | 6674 | barbarian assault, penance queen
+Bloodhound | 19730 | 7232 | clue scroll (master)
+Lil' creator | 25348 25350 | 3566 5008 | soul wars, spoils of war
+Soup | 31283 | 14930 |
+Gull | 31285 | 14931 |
+Beef | 33124 | 15631 |

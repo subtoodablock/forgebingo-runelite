@@ -103,7 +103,7 @@ import okhttp3.OkHttpClient;
 @Slf4j
 public class ForgeBingoPlugin extends Plugin
 {
-    static final String VERSION = "2.1.0";
+    static final String VERSION = "2.1.1";
     private static final long BOARD_POLL_SECONDS = 8;
     /** spot animation id of the level-up fireworks (the one the game plays at 99) */
     private static final int LEVEL_UP_FIREWORKS = 199;

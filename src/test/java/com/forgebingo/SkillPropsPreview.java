@@ -1,7 +1,7 @@
 package com.forgebingo;
 
 import com.forgebingo.core.SkillProp;
-import com.forgebingo.core.SkillProps;
+import com.forgebingo.core.SkillPropArt;
 import java.awt.Color;
 import java.awt.Font;
 import java.awt.Graphics2D;
@@ -42,7 +42,7 @@ public final class SkillPropsPreview
         g.drawString("1x (top) and 2x (bottom), stage 2, frame 0", 8, y - 4);
         for (int i = 0; i < all.length; i++)
         {
-            BufferedImage im = SkillProps.image(all[i], 2, 0);
+            BufferedImage im = SkillPropArt.image(all[i], 2, 0);
             g.drawImage(im, 8 + i * (IMG + 8), y, null);
             g.drawImage(im, 8 + i * (IMG * 2 + 4) / 1 - 0, y + IMG + 12, IMG * 2, IMG * 2, null);
         }
@@ -85,7 +85,7 @@ public final class SkillPropsPreview
         int[][] spec = {{0, 0}, {1, 0}, {2, 0}, {2, 1}};
         for (int k = 0; k < 4; k++)
         {
-            BufferedImage im = SkillProps.image(p, spec[k][0], spec[k][1]);
+            BufferedImage im = SkillPropArt.image(p, spec[k][0], spec[k][1]);
             int x = ox + k * CELL;
             int y = oy + LABEL;
             g.setColor(GROUND);
