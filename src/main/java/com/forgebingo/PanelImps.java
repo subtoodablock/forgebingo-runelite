@@ -51,7 +51,13 @@ final class PanelImps extends LayerUI<JComponent>
     /** client property: this component's top edge is somewhere an imp can stand */
     static final String PLATFORM = "forgebingo.impPlatform";
 
-    private static final float SPEED = 26f;
+    /**
+     * Walking speed, px a second (owner, 2026-11-25: "a little slower"; it was 26). Each creature multiplies it by
+     * its own {@link Imp#pace}, so no two move in step.
+     */
+    private static final float SPEED = 17f;
+    /** two walkers closer than this on the same card drift apart rather than bunch up */
+    private static final float PERSONAL_SPACE = 46f;
     private static final float GRAVITY = 1400f;
     /** body size the physics uses (the sprite itself is 42 x 34 with room for hats and staffs) */
     private static final int BODY_W = 22;
@@ -65,6 +71,10 @@ final class PanelImps extends LayerUI<JComponent>
         int dir = 1;
         Mode mode = Mode.AIR;
         float t, life, chatCd, squash, px, seekT, spark, sparkAge = 9f, bubbleT;
+        /** its own character: how fast it walks (x SPEED) and how restless it is (0 dawdler .. 1 explorer) */
+        float pace = 1f, wander = 0.5f;
+        /** seconds before it may be nudged away from a neighbour again */
+        float spaceCd;
         int seek, side = 1, cdir = -1;
         String bubble = "";
         ImpSprite.Hat hat = ImpSprite.Hat.NONE;
@@ -108,6 +118,14 @@ final class PanelImps extends LayerUI<JComponent>
     private static final float RAIN_GRAVITY = 240f;
     private static final float RAIN_MAX_FALL = 170f;
     private static final int RAIN_MAX = 7;
+    /**
+     * Seconds between two falls (owner, 2026-11-25: "maybe once every 5 minutes", and less regular, "more of a
+     * surprise"): anywhere from two and a half to seven and a half minutes, five on average. It used to be every 4
+     * to 18 seconds.
+     */
+    private static final float RAIN_GAP_MIN = 150f, RAIN_GAP_MAX = 450f;
+    /** the first fall after a board is linked or the theme changes */
+    private static final float RAIN_FIRST_MIN = 60f, RAIN_FIRST_MAX = 300f;
 
     /** One falling item: centre x/y in the column's coordinates. */
     private static final class Drop
@@ -144,7 +162,7 @@ final class PanelImps extends LayerUI<JComponent>
 
     private boolean fxOn()
     {
-        return ThemeFx.moving(theme) && PanelUi.animations && PanelUi.effects == ForgeBingoConfig.PanelEffects.FULL;
+        return linked && ThemeFx.moving(theme) && PanelUi.animations && PanelUi.effects == ForgeBingoConfig.PanelEffects.FULL;
     }
 
     /** The "Theme" setting changed: everyone leaves and the new cast drops in. */
@@ -156,11 +174,18 @@ final class PanelImps extends LayerUI<JComponent>
         clearDrops();
         fx.reset();
         rollT = PanelTheme.ROLL_SECONDS;
-        nextDrop = 2f;
+        nextDrop = rnd(RAIN_FIRST_MIN, RAIN_FIRST_MAX);
         sync();
         if (layer != null) layer.repaint();
     }
-    private float nextDrop = 5f;
+    private float nextDrop = 120f;
+    /** how many times it has rained, and how many creatures are out (for the tests) */
+    int rainEvents;
+
+    int creatures()
+    {
+        return imps.size();
+    }
     /** the item the mouse is carrying, and where on it the mouse took hold */
     private Drop held;
     private float holdDx, holdDy;
@@ -251,6 +276,11 @@ final class PanelImps extends LayerUI<JComponent>
     private final Timer timer = new Timer(33, e -> frame());
     private JLayer<? extends JComponent> layer;
     private boolean enabled = true;
+    /**
+     * What the settings ask for, and whether a board is linked yet. Nothing walks, falls or moves until the player has
+     * a board on the panel (owner, 2026-11-25): {@link #enabled} and {@link #rain} are these put together.
+     */
+    private boolean wantImps = true, wantRain = true, linked = true;
     private long lastNanos;
     private float sincePlats = 99f;
     private float clock;
@@ -301,12 +331,31 @@ final class PanelImps extends LayerUI<JComponent>
 
     void setEnabled(boolean on)
     {
-        enabled = on;
-        if (!on)
+        wantImps = on;
+        apply();
+    }
+
+    /** A board is on the panel (or not yet): the creatures, the falling items and the moving touches wait for it. */
+    void setLinked(boolean on)
+    {
+        if (linked == on) return;
+        linked = on;
+        // the first item is a surprise some way off, never a welcome shower
+        if (on) nextDrop = rnd(RAIN_FIRST_MIN, RAIN_FIRST_MAX);
+        apply();
+    }
+
+    private void apply()
+    {
+        enabled = wantImps && linked;
+        rain = wantRain && linked;
+        if (!enabled)
         {
             imps.clear();
             clearSpells();
         }
+        if (!rain) clearDrops();
+        if (!linked) fx.reset();
         sync();
         if (layer != null) layer.repaint();
     }
@@ -320,10 +369,8 @@ final class PanelImps extends LayerUI<JComponent>
     /** Switches the item rain on or off (the "Side panel item rain" setting). */
     void setRain(boolean on)
     {
-        rain = on;
-        if (!on) clearDrops();
-        sync();
-        if (layer != null) layer.repaint();
+        wantRain = on;
+        apply();
     }
 
     private void clearDrops()
@@ -336,6 +383,8 @@ final class PanelImps extends LayerUI<JComponent>
     /** Stops everything for good (plugin shut down). */
     void dispose()
     {
+        wantImps = false;
+        wantRain = false;
         enabled = false;
         rain = false;
         timer.stop();
@@ -405,7 +454,10 @@ final class PanelImps extends LayerUI<JComponent>
         m.t = rnd(1, 3);
         m.seek = 0;
         m.seekT = 0;
-        m.chatCd = rnd(2, 6);
+        m.chatCd = rnd(20, 70);
+        m.pace = rnd(0.7f, 1.25f);
+        m.wander = rnd.nextFloat();
+        m.spaceCd = rnd(2, 6);
         m.squash = 0;
         m.life = rnd(150, 400);
         m.spark = rnd(2, 6);
@@ -675,7 +727,7 @@ final class PanelImps extends LayerUI<JComponent>
         {
             // a new spot to head for; when its time is up it leaves over the top
             m.mode = Mode.WALK;
-            m.t = rnd(2.5f, 6f);
+            m.t = rnd(4f, 11f);
             m.tx = rnd(26, Math.max(40, vw - 26));
             m.ty = m.life <= 0 ? view.y - 90 : view.y + rnd(36, Math.max(60, view.height - 40));
         }
@@ -718,7 +770,7 @@ final class PanelImps extends LayerUI<JComponent>
             m.x = Math.max(edge, Math.min(vw - edge - 2, m.x));
             return;
         }
-        float speed = d < 20 ? 14f : 46f;
+        float speed = (d < 20 ? 10f : 30f) * m.pace;
         m.vx += (dx / d * speed - m.vx) * Math.min(1, dt * 1.6f);
         m.vy += (dy / d * speed - m.vy) * Math.min(1, dt * 1.6f);
         m.x += m.vx * dt;
@@ -834,6 +886,7 @@ final class PanelImps extends LayerUI<JComponent>
         m.squash += (0 - m.squash) * Math.min(1, dt * 9);
         m.life -= dt;
         m.chatCd -= dt;
+        m.spaceCd -= dt;
         m.sparkAge += dt;
         if (m.bubbleT > 0)
         {
@@ -867,12 +920,12 @@ final class PanelImps extends LayerUI<JComponent>
                 if (m.t <= 0)
                 {
                     m.mode = Mode.WALK;
-                    m.t = rnd(1.5f, 4);
+                    m.t = rnd(2f, 7f);
                 }
                 return;
             }
-            m.px += dt * 8;
-            float nx = m.x + m.dir * SPEED * dt;
+            m.px += dt * 8 * (SPEED / 26f) * m.pace;
+            float nx = m.x + m.dir * SPEED * m.pace * dt;
             if (nx > p[1] - 3 || nx < p[0] + 3)
             {
                 boolean atEdge = nx > p[1] - 3 ? p[1] >= vw - 6.5f : p[0] <= 6.5f;
@@ -894,23 +947,25 @@ final class PanelImps extends LayerUI<JComponent>
             if (m.t <= 0)
             {
                 float r = rnd.nextFloat();
-                m.t = rnd(1.5f, 4);
-                if (r < 0.2f) launch(m, m.dir * 30, -260);
-                else if (r < 0.42f)
+                m.t = rnd(2f, 7f);
+                float hop = 0.08f, travel = hop + 0.14f + 0.2f * m.wander, seek = travel + 0.08f + 0.12f * m.wander, turn = seek + 0.1f;
+                if (r < hop) launch(m, m.dir * 30, -260);
+                else if (r < travel)
                 {
                     if (!jumpToNearby(m)) m.dir = -m.dir;
                 }
-                else if (r < 0.52f)
+                else if (r < seek)
                 {
                     m.seek = rnd.nextBoolean() ? -1 : 1;
                     m.dir = m.seek;
-                    m.seekT = 14;
+                    m.seekT = 20;
                 }
-                else if (r < 0.66f) m.dir = -m.dir;
+                else if (r < turn) m.dir = -m.dir;
                 else
                 {
+                    // a rest: usually a few seconds, now and then a long sit
                     m.mode = Mode.IDLE;
-                    m.t = rnd(0.8f, 2.6f);
+                    m.t = rnd.nextFloat() < 0.18f ? rnd(10f, 24f) : rnd(2f, 8f);
                 }
             }
             if (m.life <= 0) spawn(m);
@@ -958,8 +1013,8 @@ final class PanelImps extends LayerUI<JComponent>
         else if (m.mode == Mode.CLIMB)
         {
             m.x = m.side == -1 ? EDGE : vw - EDGE;
-            m.y += m.cdir * 22 * dt;
-            m.px += dt * 8;
+            m.y += m.cdir * 15 * m.pace * dt;
+            m.px += dt * 5.5f * m.pace;
             m.t -= dt;
             if (m.y < 40) m.cdir = 1;
             if (m.y > docH - 4)
@@ -981,7 +1036,8 @@ final class PanelImps extends LayerUI<JComponent>
             {
                 m.mode = Mode.WALK;
                 m.t = rnd(1, 3);
-                m.chatCd = rnd(6, 12);
+                m.chatCd = rnd(45, 120);
+                m.spaceCd = 0;
                 m.dir = rnd.nextBoolean() ? 1 : -1;
                 m.bubble = "";
             }
@@ -1037,30 +1093,8 @@ final class PanelImps extends LayerUI<JComponent>
         for (Imp m : imps) step(m, dt);
         stepVisitors(dt);
         stepSpells(dt);
-        // hanging out: two imps that meet stop for a chat
-        for (int i = 0; i < imps.size(); i++)
-        {
-            Imp a = imps.get(i);
-            if ((a.mode != Mode.WALK && a.mode != Mode.IDLE) || a.chatCd > 0 || a.kind.flies()) continue;
-            for (int j = i + 1; j < imps.size(); j++)
-            {
-                Imp b = imps.get(j);
-                if ((b.mode != Mode.WALK && b.mode != Mode.IDLE) || b.chatCd > 0 || b.kind.flies()) continue;
-                if (Math.abs(a.x - b.x) < 26 && Math.abs(a.y - b.y) < 4 && rnd.nextFloat() < dt * 1.5f)
-                {
-                    float d = rnd(1.2f, 3);
-                    a.mode = Mode.CHAT;
-                    b.mode = Mode.CHAT;
-                    a.t = d;
-                    b.t = d;
-                    a.dir = a.x <= b.x ? 1 : -1;
-                    b.dir = -a.dir;
-                    a.bubble = rnd.nextBoolean() ? "heart" : "...";
-                    b.bubble = rnd.nextBoolean() ? "note" : "...";
-                    break;
-                }
-            }
-        }
+        // they never stop to chat and nothing pops up over their heads (owner, 2026-11-25): each keeps to itself
+        spreadOut();
         for (Imp m : imps)
         {
             if (m.rare)
@@ -1085,6 +1119,41 @@ final class PanelImps extends LayerUI<JComponent>
             }
             layer.repaint(m.last == null ? r : r.union(m.last));
             m.last = r;
+        }
+    }
+
+    /**
+     * Keeps the walkers from bunching up (owner, 2026-11-25: "not hang out near each other that much"): two on the
+     * same card inside each other's space turn away from one another, and one of them often leaves for another card.
+     */
+    private void spreadOut()
+    {
+        for (int i = 0; i < imps.size(); i++)
+        {
+            Imp a = imps.get(i);
+            if ((a.mode != Mode.WALK && a.mode != Mode.IDLE) || a.spaceCd > 0 || a.kind.flies()) continue;
+            for (int j = i + 1; j < imps.size(); j++)
+            {
+                Imp b = imps.get(j);
+                if ((b.mode != Mode.WALK && b.mode != Mode.IDLE) || b.spaceCd > 0 || b.kind.flies()) continue;
+                if (Math.abs(a.x - b.x) >= PERSONAL_SPACE || Math.abs(a.y - b.y) >= 4) continue;
+                a.dir = a.x <= b.x ? -1 : 1;
+                b.dir = -a.dir;
+                a.spaceCd = rnd(5, 11);
+                b.spaceCd = rnd(5, 11);
+                for (Imp m : new Imp[] {a, b})
+                {
+                    if (m.mode == Mode.IDLE)
+                    {
+                        m.mode = Mode.WALK;
+                        m.t = rnd(2f, 5f);
+                    }
+                }
+                // the more restless of the two goes somewhere else altogether
+                Imp mover = a.wander >= b.wander ? a : b;
+                if (rnd.nextFloat() < 0.55f) jumpToNearby(mover);
+                break;
+            }
         }
     }
 
@@ -1146,12 +1215,12 @@ final class PanelImps extends LayerUI<JComponent>
         Rectangle view = layer.getVisibleRect();
         int vw = width();
         float r = rnd.nextFloat();
-        if (r < 0.14f)
+        if (r < 0.34f)
         {
             int n = 3 + rnd.nextInt(3);
             for (int i = 0; i < n; i++) newDrop(rnd(22, Math.max(30, vw - 22)), view.y - rnd(24, 190), rnd(-12, 12), rnd(20, 70));
         }
-        else if (r < 0.36f)
+        else if (r < 0.58f)
         {
             boolean fromLeft = rnd.nextBoolean();
             float y = view.y + rnd(0.15f, 0.6f) * view.height;
@@ -1169,7 +1238,8 @@ final class PanelImps extends LayerUI<JComponent>
         nextDrop -= dt;
         if (nextDrop <= 0)
         {
-            nextDrop = theme.falls.length > 0 ? rnd(4, 11) : rnd(7, 18);
+            nextDrop = rnd(RAIN_GAP_MIN, RAIN_GAP_MAX);
+            rainEvents++;
             rainSome();
         }
         if (drops.isEmpty()) return;
@@ -1262,8 +1332,6 @@ final class PanelImps extends LayerUI<JComponent>
             if (m.mode == Mode.AIR) continue;
             if (Math.abs(p.x - m.x) <= BODY_W / 2 + 2 && p.y <= m.y + 1 && p.y >= m.y - 22)
             {
-                m.bubble = "!";
-                m.bubbleT = 0.9f;
                 m.dir = p.x < m.x ? 1 : -1;
                 if (m.kind.variants > 1)
                 {
@@ -1436,34 +1504,6 @@ final class PanelImps extends LayerUI<JComponent>
             star.lineTo(sx - r * 0.3f, sy - r * 0.3f);
             star.closePath();
             g.fill(star);
-        }
-        if (!m.bubble.isEmpty()) paintBubble(g, m.bubble, Math.round(x), Math.round(y) - 26);
-    }
-
-    private static final String[] HEART = {".x.x.", "xxxxx", "xxxxx", ".xxx.", "..x.."};
-    private static final String[] NOTE = {"..xx.", "..x.x", "..x..", "xxx..", "xxx.."};
-    private static final String[] DOTS = {".....", ".....", ".....", ".....", "x.x.x"};
-    private static final String[] BANG = {"..x..", "..x..", "..x..", ".....", "..x.."};
-
-    /** A tiny pixel symbol over an imp's head, with a dark edge so it reads on any card. */
-    private static void paintBubble(Graphics2D g, String what, int cx, int top)
-    {
-        String[] rows = "heart".equals(what) ? HEART : "note".equals(what) ? NOTE : "!".equals(what) ? BANG : DOTS;
-        Color c = "heart".equals(what) ? new Color(0xff7f9d) : new Color(0xffe9a8);
-        for (int pass = 0; pass < 2; pass++)
-        {
-            g.setColor(pass == 0 ? new Color(0, 0, 0, 200) : c);
-            for (int j = 0; j < rows.length; j++)
-            {
-                for (int i = 0; i < rows[j].length(); i++)
-                {
-                    if (rows[j].charAt(i) != 'x') continue;
-                    int px = cx - 5 + i * 2;
-                    int py = top + j * 2;
-                    if (pass == 0) g.fillRect(px - 1, py - 1, 4, 4);
-                    else g.fillRect(px, py, 2, 2);
-                }
-            }
         }
     }
 }

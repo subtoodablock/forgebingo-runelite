@@ -56,6 +56,26 @@ public class OfflineQueueTest
     }
 
     @Test
+    public void idsListsSurvivorsAfterLoad() throws IOException
+    {
+        // the ids queued when the client last closed: their in-memory proof screenshots are gone on the next start
+        Path f = tmp.getRoot().toPath().resolve("forgebingo").resolve("queue.json");
+        OfflineQueue q = new OfflineQueue(TestFiles.fp(f), gson);
+        q.add(new QueuedEvent(event("a"), 1000));
+        q.add(new QueuedEvent(event("b"), 1000));
+
+        OfflineQueue reloaded = new OfflineQueue(TestFiles.fp(f), gson);
+        assertTrue("nothing survived until the file is loaded", reloaded.ids().isEmpty());
+        reloaded.load();
+        assertEquals(new java.util.HashSet<>(java.util.Arrays.asList("a", "b")), reloaded.ids());
+        reloaded.remove("a");
+        assertEquals(java.util.Collections.singleton("b"), reloaded.ids());
+        // the snapshot is a copy: changing it does not touch the queue
+        reloaded.ids().clear();
+        assertEquals(1, reloaded.size());
+    }
+
+    @Test
     public void corruptFileIsSetAsideNotCrash() throws IOException
     {
         Path f = tmp.getRoot().toPath().resolve("queue.json");

@@ -389,6 +389,8 @@ class ForgeBingoPanel extends PluginPanel
         // no leaderboard or notices list here (owner, 2026-11-10): drops are announced in chat instead
 
         imps.setItemImages(plugin::itemImage);
+        // no creatures, falling items or moving touches until a board is linked (setBoard switches them on)
+        imps.setLinked(false);
         // the imps are painted over the column by a layer, in the column's own coordinates (they scroll with it)
         JScrollPane scroll = new JScrollPane(new javax.swing.JLayer<JComponent>(content, imps),
             JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
@@ -772,6 +774,7 @@ class ForgeBingoPanel extends PluginPanel
     {
         lastBoard = board;
         lastItemManager = itemManager;
+        imps.setLinked(true);
         String teamName = board.teamName == null ? "Your team" : board.teamName;
         teamLabel.setFont(headFontFor(teamName));
         teamLabel.setText(wrapHtml(teamName, CARD_TEXT));

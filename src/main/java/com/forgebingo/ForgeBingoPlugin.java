@@ -103,7 +103,7 @@ import okhttp3.OkHttpClient;
 @Slf4j
 public class ForgeBingoPlugin extends Plugin
 {
-    static final String VERSION = "2.1.1";
+    static final String VERSION = "2.1.2";
     private static final long BOARD_POLL_SECONDS = 8;
     /** spot animation id of the level-up fireworks (the one the game plays at 99) */
     private static final int LEVEL_UP_FIREWORKS = 199;
@@ -143,6 +143,9 @@ public class ForgeBingoPlugin extends Plugin
     private final Random random = new Random();
     private final Map<Skill, Integer> levels = new EnumMap<>(Skill.class);
     private final Map<String, Screenshot> screenshots = new ConcurrentHashMap<>();
+    /** Ids queued at startup (restart survivors): their proof screenshots lived only in memory, so a match counts without one. */
+    private final java.util.Set<String> restoredNoProof = ConcurrentHashMap.newKeySet();
+    private volatile boolean restoredNoProofNoticed;
 
     private ForgeBingoPanel panel;
     private NavigationButton navigationButton;
@@ -248,6 +251,10 @@ public class ForgeBingoPlugin extends Plugin
         // saved by the worker (flushQueue), never on the game thread
         queue = new OfflineQueue(queueFile(), gson, true);
         queue.load();
+        // these survived a restart, so their in-memory proof screenshots are gone (see maybeUploadScreenshot)
+        restoredNoProof.clear();
+        restoredNoProof.addAll(queue.ids());
+        restoredNoProofNoticed = false;
         processor = new QueueProcessor(queue, api::sendEvent, new QueueListener(), System::currentTimeMillis, random);
 
         SwingUtilities.invokeLater(() -> {
@@ -319,6 +326,8 @@ public class ForgeBingoPlugin extends Plugin
         if (closingPanel != null) SwingUtilities.invokeLater(closingPanel::dispose);
         panel = null;
         screenshots.clear();
+        restoredNoProof.clear();
+        restoredNoProofNoticed = false;
         proofRetries.clear();
         frameJobs.clear();
         shotsInProgress.clear();
@@ -2332,7 +2341,17 @@ public class ForgeBingoPlugin extends Plugin
             return;
         }
         Screenshot s = screenshots.remove(event.id);
-        if (s == null) return;
+        if (s == null)
+        {
+            // A drop queued before a restart counts here, but its proof screenshot lived only in memory and is gone
+            // (owner, 2026-11-25). Tell the player once so they can add a picture on the board if their clan needs it.
+            if (restoredNoProof.remove(event.id) && !restoredNoProofNoticed)
+            {
+                restoredNoProofNoticed = true;
+                notice("A ForgeBingo drop saved before you last closed the client was counted, but its proof screenshot could not be saved. Open that tile on the board and send a screenshot if your clan needs proof.", true);
+            }
+            return;
+        }
         // the frames that were really taken (a frame is skipped when the bank PIN is up or the game logged out)
         List<Integer> shots = new ArrayList<>();
         for (int i = 0; i < s.raw.length; i++) if (s.raw[i] != null && s.taken[i] != null) shots.add(i);

@@ -166,6 +166,12 @@ public final class OfflineQueue
         }
     }
 
+    /** The ids currently queued (a snapshot). Right after {@link #load()} these are the entries that survived a restart. */
+    public synchronized java.util.Set<String> ids()
+    {
+        return new java.util.LinkedHashSet<>(entries.keySet());
+    }
+
     /** Makes everything due now (used after the user fixes their key). */
     public synchronized void retryAllNow(long now)
     {

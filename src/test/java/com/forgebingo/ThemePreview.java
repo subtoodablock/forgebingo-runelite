@@ -88,6 +88,7 @@ public final class ThemePreview
         ForgeBingoPanel panel = new ForgeBingoPanel(new PanelPreview.Fake(), null);
         panel.setStatus(true, "Connected");
         // the rare bosses are turned up here so the picture shows them; in the plugin they are 1 in 100
+        panel.imps.setLinked(true);
         panel.imps.rollChance = 1f;
         panel.imps.rollT = 24f;
         ApiModels.BoardResponse board = new Gson().fromJson(BOARD, ApiModels.BoardResponse.class);

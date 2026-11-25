@@ -63,6 +63,7 @@ public final class ThemeMotion
         ForgeBingoPanel panel = new ForgeBingoPanel(new PanelPreview.Fake(), null);
         panel.setStatus(true, "Connected");
         // the roll lands a few seconds into the clip, so the pop out and pop in can be watched
+        panel.imps.setLinked(true);
         panel.imps.rollChance = 1f;
         panel.imps.rollT = 18.5f;
         // -Dchexy=true: the visitor is always Chexy
