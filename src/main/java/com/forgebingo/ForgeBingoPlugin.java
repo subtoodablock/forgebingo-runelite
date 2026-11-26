@@ -126,7 +126,23 @@ public class ForgeBingoPlugin extends Plugin
     @Inject private ChatMessageManager chatMessageManager;
     @Inject private ItemManager itemManager;
     @Inject private DrawManager drawManager;
-    @Inject private ScheduledExecutorService executor;
+    /**
+     * Our own worker for every server call, picture encode and upload (2026-11-25). RuneLite's injected executor is
+     * ONE thread shared by every plugin, and an upload can hold it for up to 90 s, stalling the others meanwhile.
+     * Made in startUp, shut down in shutDown; anything handed to it after that is dropped (every task checks running).
+     */
+    private volatile ScheduledExecutorService executor = newWorker();
+
+    private static ScheduledExecutorService newWorker()
+    {
+        java.util.concurrent.ScheduledThreadPoolExecutor w = new java.util.concurrent.ScheduledThreadPoolExecutor(1, r -> {
+            Thread t = new Thread(r, "ForgeBingo worker");
+            t.setDaemon(true);
+            return t;
+        }, new java.util.concurrent.ThreadPoolExecutor.DiscardPolicy());
+        w.setRemoveOnCancelPolicy(true);
+        return w;
+    }
     @Inject private OkHttpClient okHttpClient;
     @Inject private OverlayManager overlayManager;
     @Inject private EffectsOverlay effects;
@@ -241,6 +257,7 @@ public class ForgeBingoPlugin extends Plugin
     @Override
     protected void startUp()
     {
+        if (executor.isShutdown()) executor = newWorker();
         running = true;
         // an address saved by an early build was the placeholder: drop it so the live default applies
         if (ApiClient.isPlaceholder(config.apiBaseUrl()))
@@ -301,6 +318,8 @@ public class ForgeBingoPlugin extends Plugin
         if (boardFuture != null) boardFuture.cancel(false);
         // whatever the worker has not written yet (an event added a moment ago) goes to disk before the queue is let go
         flushQueue(queue);
+        // what is already queued still runs (each task checks running); nothing new is taken after this
+        executor.shutdown();
         overlayManager.remove(effects);
         effects.clear();
         if (boardInput != null) boardInput.unregister(mouseManager, keyManager);
@@ -311,6 +330,7 @@ public class ForgeBingoPlugin extends Plugin
         blackoutShown.clear();
         currentBoard = null;
         boardVersions.clear(); // or the next start would think the board is already loaded and never show it
+        namedIds = null;
         knownBoards = null;
         liveBoards = 0;
         selectedBoardId = null;
@@ -904,10 +924,20 @@ public class ForgeBingoPlugin extends Plugin
         Set<Integer> all = new HashSet<>(ids);
         if (board.hiddenItemIds != null) all.addAll(board.hiddenItemIds); // secret tiles: ids only, never named in the panel
         boardItemIds = java.util.Collections.unmodifiableSet(all);
+        // Every board refresh used to look up all of these (up to 2,000) in one go on the client thread, which froze
+        // the game for a moment on big boards (2026-11-25). Same items as last time: nothing to do. Otherwise a few
+        // per frame, and a newer board's lookup replaces one still in progress.
+        if (ids.equals(namedIds)) return;
+        namedIds = ids;
+        final List<Integer> todo = new ArrayList<>(ids);
+        final List<ApiModels.CatalogueItem> named = new ArrayList<>();
+        final int[] next = {0};
         clientThread.invoke(() -> {
-            List<ApiModels.CatalogueItem> named = new ArrayList<>();
-            for (int id : ids)
+            if (!running || namedIds != ids) return true; // switched off, or a newer board took over
+            int end = Math.min(todo.size(), next[0] + ITEM_NAMES_PER_FRAME);
+            for (int n = next[0]; n < end; n++)
             {
+                int id = todo.get(n);
                 try
                 {
                     String name = itemManager.getItemComposition(id).getName();
@@ -918,10 +948,18 @@ public class ForgeBingoPlugin extends Plugin
                     log.debug("no item definition for {}", id);
                 }
             }
+            next[0] = end;
+            if (end < todo.size()) return false; // the rest on the next frame
             itemNames.setBoard(named);
             notifyPanel(ForgeBingoPanel::iconsChanged); // the per-item lists can show real names now
+            return true;
         });
     }
+
+    /** item names looked up per client frame (see indexBoardItems) */
+    static final int ITEM_NAMES_PER_FRAME = 50;
+    /** the item ids whose names were last looked up; a refresh with the same ones skips the lookup */
+    private volatile Set<Integer> namedIds;
 
     /** An item's name for the panel and overlay ("Item 526" until the names load). Any thread. */
     String itemName(int itemId)

@@ -598,8 +598,21 @@ class ForgeBingoPanel extends PluginPanel
         queueLabel.setForeground(size == 0 ? MUTED : WAIT);
     }
 
+    /** what the board list shows now (see setBoards) */
+    private String boardsShown;
+
     void setBoards(List<ApiModels.BoardSummary> boards, String activeId)
     {
+        // called on every 10 s poll: rebuilding an unchanged list closed the dropdown under the player's mouse
+        StringBuilder sig = new StringBuilder(String.valueOf(activeId));
+        for (ApiModels.BoardSummary b : boards == null ? Collections.<ApiModels.BoardSummary>emptyList() : boards)
+        {
+            sig.append('\n').append(b.teamBoardId).append('|').append(b).append('|').append(b.status).append('|').append(b.active)
+                .append('|').append(b.completedCount).append('/').append(b.totalTiles).append('|').append(b.startsAt).append('|').append(b.endsAt);
+        }
+        String s = sig.toString();
+        if (s.equals(boardsShown)) return;
+        boardsShown = s;
         updatingBox = true;
         boardBox.removeAllItems();
         ApiModels.BoardSummary selected = null;

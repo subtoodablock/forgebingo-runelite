@@ -881,10 +881,9 @@ public class BoardOverlay extends Overlay
                 g.setTransform(home);
                 g.setComposite(base);
             }
-            // Legendary: lightning (Tempest) and the burst at the end, over the tiles; then the animation's name tag
+            // Legendary: lightning (Tempest) and the burst at the end, over the tiles. No name or rarity tag (owner,
+            // 2026-11-25): nobody should know how rare an animation is, players just enjoy it.
             fx.front(g, spec, b, sinceOpen, boardAlpha);
-            g.setComposite(base);
-            fx.tag(g, spec, b, sinceOpen, boardAlpha, fSmallBold, TEXT, WELL);
             g.setComposite(base);
             if (sinceOpen > DEAL_MS) cascade = false;
         }

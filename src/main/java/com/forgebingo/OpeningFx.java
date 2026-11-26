@@ -2,12 +2,9 @@ package com.forgebingo;
 
 import com.forgebingo.core.BoardLayout;
 import com.forgebingo.core.OpeningAnim;
-import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Composite;
-import java.awt.Font;
-import java.awt.FontMetrics;
 import java.awt.GradientPaint;
 import java.awt.Graphics2D;
 import java.awt.Rectangle;
@@ -21,8 +18,8 @@ import java.awt.geom.RoundRectangle2D;
 /**
  * The opening animation's effects, by rarity (see {@link OpeningAnim}). Uncommon: a flourish as each tile lands.
  * Epic: a glow and a strong effect on landing (the trails are drawn by the overlay). Legendary: a whole scene behind
- * the board while the tiles arrive, a glow and sparks on landing and a burst at the end. Also the little tag that
- * names the animation and its rarity while it plays.
+ * the board while the tiles arrive, a glow and sparks on landing and a burst at the end. Nothing names the animation
+ * or its rarity on screen (owner, 2026-11-25).
  *
  * <p>Client thread only. Shapes are reused between frames; the only allocations per frame are a few colours and,
  * for Legendary scenes, one clipped Graphics.
@@ -601,49 +598,5 @@ final class OpeningFx
             oval.setFrame(cx + Math.cos(ang) * d - size / 2.0, cy + Math.sin(ang) * d - size / 2.0, size, size);
             g.fill(oval);
         }
-    }
-
-    // ---------- the name tag ----------
-
-    /**
-     * While the opening plays: a small tag on the board's bottom edge with the animation's rarity (in its colour) and
-     * name, fading in and out inside DEAL_MS.
-     */
-    void tag(Graphics2D g, OpeningAnim.Spec spec, Rectangle b, long since, float alpha, Font font, Color text, Color well)
-    {
-        double a = BoardLayout.easeInOut((since - 120) / 300.0) * BoardLayout.easeInOut((DEAL_MS - 60 - since) / 380.0) * alpha;
-        if (a <= 0.01) return;
-        String rarity = spec.rarity.label.toUpperCase();
-        String sep = "  ";
-        FontMetrics fm = g.getFontMetrics(font);
-        int rw = fm.stringWidth(rarity), sw = fm.stringWidth(sep), nw = fm.stringWidth(spec.name);
-        int padX = (int) Math.round(9 * s), h = fm.getAscent() + fm.getDescent() + (int) Math.round(6 * s);
-        int w = rw + sw + nw + 2 * padX;
-        int x = (int) Math.round(b.getCenterX() - w / 2.0), y = b.y + b.height - h / 2;
-        Composite base = g.getComposite();
-        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) a));
-        Color rc = spec.rarity.colour;
-        if (spec.rarity == OpeningAnim.Rarity.LEGENDARY || spec.rarity == OpeningAnim.Rarity.EPIC)
-        {
-            // a soft glow round the tag, breathing
-            double glow = (spec.rarity == OpeningAnim.Rarity.LEGENDARY ? 0.5 : 0.3) * (0.7 + 0.3 * Math.sin(since / 180.0));
-            g.setStroke(stroke(Math.max(3, 5 * s)));
-            g.setColor(col(rc, glow));
-            rr.setRoundRect(x, y, w, h, h, h);
-            g.draw(rr);
-        }
-        g.setColor(well);
-        rr.setRoundRect(x, y, w, h, h, h);
-        g.fill(rr);
-        g.setStroke(stroke(Math.max(1, 1.2 * s)));
-        g.setColor(rc);
-        g.draw(rr);
-        int ty = y + (h - fm.getAscent() - fm.getDescent()) / 2 + fm.getAscent();
-        g.setFont(font);
-        g.setColor(rc);
-        g.drawString(rarity, x + padX, ty);
-        g.setColor(text);
-        g.drawString(spec.name, x + padX + rw + sw, ty);
-        g.setComposite(base);
     }
 }
