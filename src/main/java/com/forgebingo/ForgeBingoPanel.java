@@ -567,32 +567,72 @@ class ForgeBingoPanel extends PluginPanel
         upcoming.removeAll();
         for (ApiModels.Membership m : upcomingList)
         {
-            String name = (m.eventName == null ? "Your bingo" : m.eventName) + (m.teamName == null ? "" : " - " + m.teamName);
             upcoming.add(gap(4));
-            upcoming.add(message(name + ": " + countdown(m.startsAt), ConnectionStatus.Level.INFO));
+            upcoming.add(upcomingCard(m, System.currentTimeMillis()));
         }
         upcoming.setVisible(!upcomingList.isEmpty());
         upcoming.revalidate();
         upcoming.repaint();
     }
 
-    /** "board opens in 2h 13m 05s" (or "when the bingo goes live" when there's no start time yet). */
-    static String countdown(String startsAt)
+    /**
+     * One bingo that has not opened (owner, 2026-11-26): the bingo's name, the WHOLE team name on its own line (it used
+     * to share one line with the countdown and was cut off), and under them either a ticking "Opens in ..." or a plain
+     * "Not open yet" when there is no start time to count down to.
+     */
+    private static JPanel upcomingCard(ApiModels.Membership m, long now)
     {
-        long start;
+        PanelUi.Card p = new PanelUi.Card(new Color(0x7d7262)).pad(6, 7, 6, 7);
+        p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
+        JLabel bingo = new PanelUi.CrispLabel(wrapHtml(m.eventName == null || m.eventName.trim().isEmpty() ? "Your bingo" : m.eventName, CARD_TEXT));
+        bingo.setFont(smallFont().deriveFont(Font.BOLD));
+        bingo.setForeground(TEXT);
+        bingo.setAlignmentX(Component.LEFT_ALIGNMENT);
+        p.add(bingo);
+        if (m.teamName != null && !m.teamName.trim().isEmpty())
+        {
+            JLabel team = new PanelUi.CrispLabel(wrapHtml(m.teamName, CARD_TEXT));
+            team.setFont(smallFont());
+            team.setForeground(TEXT);
+            team.setAlignmentX(Component.LEFT_ALIGNMENT);
+            p.add(team);
+        }
+        long left = secondsUntil(m.startsAt, now);
+        JLabel when = new PanelUi.CrispLabel(wrapHtml(opensText(left), CARD_TEXT));
+        when.setFont(smallFont());
+        when.setForeground(left > 0 ? WAIT : MUTED);
+        when.setAlignmentX(Component.LEFT_ALIGNMENT);
+        p.add(gap(2));
+        p.add(when);
+        return fullWidth(p, -1);
+    }
+
+    /** Seconds until the bingo's start time; 0 or less when it has passed, -1 when there is none (or it cannot be read). */
+    static long secondsUntil(String startsAt, long now)
+    {
         try
         {
-            start = startsAt == null ? -1 : java.time.OffsetDateTime.parse(startsAt).toInstant().toEpochMilli();
+            if (startsAt == null) return -1;
+            long start = java.time.OffsetDateTime.parse(startsAt).toInstant().toEpochMilli();
+            return Math.max(0, (start - now) / 1000);
         }
         catch (RuntimeException ex)
         {
-            start = -1;
+            return -1;
         }
-        if (start < 0) return "board opens when the bingo goes live";
-        long s = (start - System.currentTimeMillis()) / 1000;
-        if (s <= 0) return "board opening...";
+    }
+
+    /**
+     * "Opens in 2h 13m 05s" while there is a start time ahead. Otherwise "Not open yet": the bingo has no start time,
+     * or the time came and the organizer has not opened it (it is still being set up, or paused). It used to say
+     * "board opening..." for ever in that case.
+     */
+    static String opensText(long secondsLeft)
+    {
+        if (secondsLeft <= 0) return "Not open yet. It opens when the organizer starts it.";
+        long s = secondsLeft;
         long d = s / 86400, h = (s % 86400) / 3600, mi = (s % 3600) / 60, se = s % 60;
-        return "board opens in " + (d > 0 ? d + "d " + h + "h " + mi + "m" : h > 0 ? h + "h " + String.format("%02dm %02ds", mi, se) : mi + "m " + String.format("%02ds", se));
+        return "Opens in " + (d > 0 ? d + "d " + h + "h " + mi + "m" : h > 0 ? h + "h " + String.format("%02dm %02ds", mi, se) : mi + "m " + String.format("%02ds", se));
     }
 
     void setQueueSize(int size, String lastError)
