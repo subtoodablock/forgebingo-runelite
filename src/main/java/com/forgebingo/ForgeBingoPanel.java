@@ -398,6 +398,10 @@ class ForgeBingoPanel extends PluginPanel
         scroll.getVerticalScrollBar().setPreferredSize(new Dimension(BAR, 0));
         scroll.getVerticalScrollBar().setUnitIncrement(16);
         scroll.getViewport().setBackground(PanelUi.BG);
+        // Swing's default scroll copies the pixels already on screen up or down, painted imps and falling items
+        // included, and only repaints the strip that came into view: each copy stayed behind as a stack of ghost
+        // sprites (owner, 2026-11-25). Repaint the whole (small) column on scroll instead.
+        scroll.getViewport().setScrollMode(javax.swing.JViewport.SIMPLE_SCROLL_MODE);
         add(scroll, BorderLayout.CENTER);
 
         pulseTimer.setCoalesce(true);
@@ -1257,6 +1261,54 @@ class ForgeBingoPanel extends PluginPanel
         return l;
     }
 
+    /** icons per row in an "Any one of these" grid, and the most shown before "+N" */
+    static final int GRID_ICON = 22;
+    static final int GRID_GAP = 3;
+    static final int GRID_MAX = 18;
+
+    /** Item icons in rows that fit the card, each naming its item on hover; past GRID_MAX a "+N" cell. */
+    private JPanel itemGrid(List<Integer> items)
+    {
+        int cols = Math.max(1, (CARD_TEXT - 4 + GRID_GAP) / (GRID_ICON + GRID_GAP));
+        boolean more = items.size() > GRID_MAX;
+        int shown = more ? GRID_MAX - 1 : items.size();
+        int cells = shown + (more ? 1 : 0);
+        JPanel grid = new JPanel(new java.awt.GridLayout(0, cols, GRID_GAP, GRID_GAP));
+        grid.setOpaque(false);
+        grid.setBorder(BorderFactory.createEmptyBorder(0, 4, 0, 0));
+        for (int i = 0; i < shown; i++)
+        {
+            JLabel icon = itemIcon(items.get(i), GRID_ICON);
+            icon.setHorizontalAlignment(SwingConstants.CENTER);
+            icon.setToolTipText(plugin.itemName(items.get(i)));
+            grid.add(icon);
+        }
+        if (more)
+        {
+            JLabel rest = new PanelUi.CrispLabel("+" + (items.size() - shown));
+            rest.setFont(smallFont());
+            rest.setForeground(MUTED);
+            rest.setHorizontalAlignment(SwingConstants.CENTER);
+            StringBuilder names = new StringBuilder("<html>");
+            for (int i = shown; i < Math.min(items.size(), shown + 30); i++)
+            {
+                if (i > shown) names.append("<br>");
+                names.append(esc(plugin.itemName(items.get(i))));
+            }
+            if (items.size() > shown + 30) names.append("<br>...");
+            rest.setToolTipText(names.append("</html>").toString());
+            grid.add(rest);
+        }
+        // fill the last row so GridLayout keeps every cell the same size and the icons stay left-aligned
+        while (cells % cols != 0 && cells > cols) { grid.add(new JLabel()); cells++; }
+        int rows = (cells + cols - 1) / cols;
+        int w = Math.min(cells, cols) * (GRID_ICON + GRID_GAP) - GRID_GAP + 4;
+        Dimension d = new Dimension(w, rows * (GRID_ICON + GRID_GAP) - GRID_GAP);
+        grid.setPreferredSize(d);
+        grid.setMaximumSize(d);
+        return grid;
+    }
+
     /**
      * One requirement, website style: icon box, name and count, a thin bar, then either each item ("x1") for
      * one-of-each tasks or "Any of" with the items it accepts; how it is tracked and "Send screenshot" underneath.
@@ -1347,23 +1399,12 @@ class ForgeBingoPanel extends PluginPanel
         }
         else if (items.size() > 1 && !done)
         {
-            // any of these items counts: a short list with icons, then "+N more"
+            // any of these items counts: a compact grid of their icons, the name on hover (owner, 2026-11-25: a name
+            // per row made tiles with several options far too long)
             box.add(gap(4));
-            box.add(left(cardText("Any of:", MUTED)));
-            int shown = Math.min(6, items.size());
-            for (int i = 0; i < shown; i++)
-            {
-                JPanel row = new JPanel(new BorderLayout(6, 0));
-                row.setOpaque(false);
-                row.setBorder(BorderFactory.createEmptyBorder(1, 4, 1, 0));
-                row.add(itemIcon(items.get(i), 20), BorderLayout.WEST);
-                JLabel n = new PanelUi.CrispLabel(wrapHtml(plugin.itemName(items.get(i)), CARD_TEXT - 40));
-                n.setFont(smallFont());
-                n.setForeground(TEXT);
-                row.add(n, BorderLayout.CENTER);
-                box.add(fullWidth(row, -1));
-            }
-            if (items.size() > shown) box.add(left(cardText("+" + (items.size() - shown) + " more", MUTED)));
+            box.add(left(cardText("Any one of these:", MUTED)));
+            box.add(gap(2));
+            box.add(left(itemGrid(items)));
         }
 
         if (!done)
