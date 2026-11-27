@@ -103,7 +103,7 @@ import okhttp3.OkHttpClient;
 @Slf4j
 public class ForgeBingoPlugin extends Plugin
 {
-    static final String VERSION = "2.1.2";
+    static final String VERSION = "2.1.3";
     private static final long BOARD_POLL_SECONDS = 8;
     /** spot animation id of the level-up fireworks (the one the game plays at 99) */
     private static final int LEVEL_UP_FIREWORKS = 199;
@@ -477,7 +477,7 @@ public class ForgeBingoPlugin extends Plugin
             {
                 notifyPanel(p -> {
                     p.setStatus(true, "Connected");
-                    p.setScope((me.body.displayName == null ? "" : "Signed in as " + me.body.displayName + "\n") + ConnectionStatus.keyScope(me.body));
+                    p.setScope((me.body.displayName == null ? "" : "ForgeBingo account: " + me.body.displayName + "\n") + ConnectionStatus.keyScope(me.body));
                 });
                 helloPending = true;
                 helloNotBefore = 0;
@@ -1574,11 +1574,26 @@ public class ForgeBingoPlugin extends Plugin
     private Map<Integer, Integer> holdings()
     {
         Map<Integer, Integer> held = new java.util.HashMap<>();
-        Map<Integer, Integer> pack = lastInventory;
-        if (pack != null) pack.forEach((id, q) -> held.merge(itemManager.canonicalize(id), q, Integer::sum));
-        Map<Integer, Integer> worn = lastContainers.get(WORN_CONTAINER_ID);
-        if (worn != null) worn.forEach((id, q) -> held.merge(itemManager.canonicalize(id), q, Integer::sum));
+        Map<Integer, Integer> pack = heldIn(INVENTORY_CONTAINER_ID, lastInventory);
+        pack.forEach((id, q) -> held.merge(itemManager.canonicalize(id), q, Integer::sum));
+        Map<Integer, Integer> worn = heldIn(WORN_CONTAINER_ID, lastContainers.get(WORN_CONTAINER_ID));
+        worn.forEach((id, q) -> held.merge(itemManager.canonicalize(id), q, Integer::sum));
         return held;
+    }
+
+    /**
+     * What one container holds: what the game says right now, and what the plugin last saw in it, whichever is more
+     * per item (2026-11-27: a fire cape reclaimed after a death counted as a Jad reward). The remembered copy is only
+     * filled when the container changes, so gear worn since before the plugin was switched on was not in it and the
+     * death memory never learned the player had it; the game's own copy may already be empty a moment after a death.
+     */
+    private Map<Integer, Integer> heldIn(int containerId, Map<Integer, Integer> remembered)
+    {
+        Map<Integer, Integer> out = new java.util.HashMap<>();
+        if (remembered != null) out.putAll(remembered);
+        ItemContainer live = client.getItemContainer(containerId);
+        if (live != null) containerCounts(live).forEach((id, q) -> out.merge(id, q, Math::max));
+        return out;
     }
 
     /**

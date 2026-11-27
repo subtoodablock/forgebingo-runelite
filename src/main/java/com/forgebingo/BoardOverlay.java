@@ -1468,7 +1468,7 @@ public class BoardOverlay extends Overlay
         {
             boolean kDone = k.completed || t.completed;
             List<String> desc = wrap(tm, k.description == null ? "" : k.description, maxW - indent, compact ? 1 : 2);
-            List<String> how = kDone || compact ? new ArrayList<>() : wrap(sm, ForgeBingoPanel.trackingText(k), maxW - indent, 2);
+            List<String> how = kDone || compact || ForgeBingoPanel.countsByItself(k) ? new ArrayList<>() : wrap(sm, ForgeBingoPanel.trackingText(k), maxW - indent, 2);
             // exactly what the drawing below uses (lines() advances ascent + descent per line)
             int tLine = tm.getAscent() + tm.getDescent();
             int sLine = sm.getAscent() + sm.getDescent();

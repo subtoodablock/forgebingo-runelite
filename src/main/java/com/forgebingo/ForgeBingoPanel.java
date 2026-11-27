@@ -1165,6 +1165,12 @@ class ForgeBingoPanel extends PluginPanel
             : TileInfo.waiting(t) ? WAIT : TEXT;
     }
 
+    /** true for tasks RuneLite counts with nothing for the player to do: those get no "how" line (owner, 2026-11-27) */
+    static boolean countsByItself(ApiModels.Task k)
+    {
+        return trackingText(k).startsWith("Counts by itself");
+    }
+
     /** How a task gets ticked off, in the player's words. */
     static String trackingText(ApiModels.Task k)
     {

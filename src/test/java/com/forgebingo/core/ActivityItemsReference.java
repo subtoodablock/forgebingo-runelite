@@ -38,6 +38,7 @@ public final class ActivityItemsReference
         m.put(30753, "Forgotten lockbox");
         m.put(30756, "Forgotten lockbox");
         m.put(32115, "Sailing");
+        m.put(31916, "Sailing");
         m.put(31961, "Sailing");
         m.put(31946, "Sailing");
         m.put(31949, "Sailing");
