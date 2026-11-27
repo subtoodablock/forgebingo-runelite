@@ -60,9 +60,41 @@ public final class GroundGuard
         return true;
     }
 
+    /** how long a drop of the player's own stays remembered while it lies there: 20 minutes of game ticks */
+    public static final int OWN_LOOT_KEEP = 2000;
+    /** the player's own fresh loot lying on the ground: "id:x:y:plane" to the tick it appeared */
+    private final Map<String, Integer> ownLoot = new HashMap<>();
+
+    private static String at(int itemId, int x, int y, int plane)
+    {
+        return itemId + ":" + x + ":" + y + ":" + plane;
+    }
+
+    /**
+     * A ground item that belongs to the player appeared at world tile (x, y, plane). Unless they just dropped it from
+     * the backpack themselves, it is loot of theirs waiting to be picked up (owner, 2026-11-27: a sea creature killed
+     * from a distance leaves its loot where it died, and taking it with Telekinetic Grab did not count).
+     */
+    public void onOwnItem(int itemId, int tick, int x, int y, int plane)
+    {
+        Integer d = droppedByMe.get(itemId);
+        if (d != null && tick >= d && tick - d <= DROP_WINDOW) return;
+        ownLoot.put(at(itemId, x, y, plane), tick);
+    }
+
+    /**
+     * A ground item vanished from world tile (x, y, plane). true when it was the player's own fresh loot (see
+     * {@link #onOwnItem}): picking that up is collecting a reward, not picking up someone's item. Answers once.
+     */
+    public boolean takeOwnLoot(int itemId, int x, int y, int plane)
+    {
+        return ownLoot.remove(at(itemId, x, y, plane)) != null;
+    }
+
     /** Call once per game tick. */
     public void prune(int tick)
     {
+        ownLoot.values().removeIf(t -> t < tick - OWN_LOOT_KEEP);
         droppedByMe.values().removeIf(t -> t < tick - KEEP);
         foreign.values().forEach(l -> l.removeIf(f -> f[0] < tick - KEEP));
         foreign.values().removeIf(List::isEmpty);

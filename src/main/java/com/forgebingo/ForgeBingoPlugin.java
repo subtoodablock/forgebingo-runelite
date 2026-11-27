@@ -1206,6 +1206,8 @@ public class ForgeBingoPlugin extends Plugin
     }
 
     private final com.forgebingo.core.GroundGuard groundGuard = new com.forgebingo.core.GroundGuard();
+    /** the activity name Sailing rewards are listed under in activity-items.txt */
+    private static final String SAILING = "Sailing";
 
     /** "Drop" on a backpack item: that item lying on the ground next is the player's own, not a monster's drop. */
     @Subscribe
@@ -1260,6 +1262,17 @@ public class ForgeBingoPlugin extends Plugin
     public void onItemSpawned(net.runelite.api.events.ItemSpawned e)
     {
         TileItem item = e.getItem();
+        // the player's own Sailing loot appearing on the ground (a sea creature killed from a distance): remembered so
+        // that picking it up counts (see onItemDespawned). An item they dropped themselves is told apart by its "Drop".
+        if (item != null && e.getTile() != null && item.getOwnership() == TileItem.OWNERSHIP_SELF)
+        {
+            int own = itemManager.canonicalize(item.getId());
+            if (SAILING.equals(com.forgebingo.core.ActivityItems.activityFor(own)))
+            {
+                net.runelite.api.coords.WorldPoint at = e.getTile().getWorldLocation();
+                if (at != null) groundGuard.onOwnItem(own, client.getTickCount(), at.getX(), at.getY(), at.getPlane());
+            }
+        }
         // another player's item, or one a group ironman teammate put down (those show to the group at once)
         if (item != null && e.getTile() != null
             && (item.getOwnership() == TileItem.OWNERSHIP_OTHER || item.getOwnership() == TileItem.OWNERSHIP_GROUP))
@@ -1568,7 +1581,15 @@ public class ForgeBingoPlugin extends Plugin
         // with Telekinetic Grab): picked-up items, whoever dropped them, never count (PvP loot included)
         TileItem item = e.getItem();
         if (item == null) return;
-        activityWatcher.onGroundItemGone(itemManager.canonicalize(item.getId()), client.getTickCount());
+        int id = itemManager.canonicalize(item.getId());
+        // except the player's own Sailing loot left where the sea creature died (owner, 2026-11-27): taking that,
+        // by sailing over it or with Telekinetic Grab from a distance, is collecting the reward
+        if (e.getTile() != null && SAILING.equals(com.forgebingo.core.ActivityItems.activityFor(id)))
+        {
+            net.runelite.api.coords.WorldPoint w = e.getTile().getWorldLocation();
+            if (w != null && groundGuard.takeOwnLoot(id, w.getX(), w.getY(), w.getPlane())) return;
+        }
+        activityWatcher.onGroundItemGone(id, client.getTickCount());
     }
 
     /**

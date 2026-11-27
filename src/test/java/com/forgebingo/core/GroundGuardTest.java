@@ -74,4 +74,44 @@ public class GroundGuardTest
         g.prune(100);
         assertTrue(g.fromMonster(WHIP, 10, X, Y, P, 1));
     }
+
+    // a sea creature killed from a distance leaves the loot where it died (owner, 2026-11-27)
+    @Test
+    public void myOwnLootOnTheGroundIsMineToCollectOnce()
+    {
+        GroundGuard g = new GroundGuard();
+        g.onOwnItem(WHIP, 100, X, Y, P);
+        g.prune(400);
+        assertTrue(g.takeOwnLoot(WHIP, X, Y, P));
+        // answered once: the same tile does not count a second time
+        assertFalse(g.takeOwnLoot(WHIP, X, Y, P));
+    }
+
+    @Test
+    public void anItemIPutDownMyselfIsNotLoot()
+    {
+        GroundGuard g = new GroundGuard();
+        g.onDropClicked(WHIP, 100);
+        g.onOwnItem(WHIP, 101, X, Y, P);
+        assertFalse(g.takeOwnLoot(WHIP, X, Y, P));
+    }
+
+    @Test
+    public void lootElsewhereOrOfAnotherKindIsNotMixedUp()
+    {
+        GroundGuard g = new GroundGuard();
+        g.onOwnItem(WHIP, 100, X, Y, P);
+        assertFalse(g.takeOwnLoot(WHIP, X + 1, Y, P));
+        assertFalse(g.takeOwnLoot(DRAGON_BONES, X, Y, P));
+        assertTrue(g.takeOwnLoot(WHIP, X, Y, P));
+    }
+
+    @Test
+    public void lootLeftLyingForTooLongIsForgotten()
+    {
+        GroundGuard g = new GroundGuard();
+        g.onOwnItem(WHIP, 100, X, Y, P);
+        g.prune(100 + GroundGuard.OWN_LOOT_KEEP + 1);
+        assertFalse(g.takeOwnLoot(WHIP, X, Y, P));
+    }
 }
