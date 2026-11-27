@@ -1186,6 +1186,25 @@ public class ForgeBingoPlugin extends Plugin
         submit(ev, true);
     }
 
+    /**
+     * Loot the game hands over without putting it on the ground under the monster: the Maggot King's corpse (straight
+     * to the backpack), Araxxor, the Royal Titans, the Mad Angel and the like. RuneLite reports those here and not as
+     * NpcLootReceived, so until 2026-11-27 none of them counted by themselves (208 Maggot King kills, no loot seen).
+     * Sent as the same monster drop as any other, named after the monster.
+     */
+    @Subscribe
+    public void onServerNpcLoot(net.runelite.client.events.ServerNpcLoot e)
+    {
+        net.runelite.api.NPCComposition npc = e.getComposition();
+        if (!config.sendNpcLoot() || npc == null || npc.getName() == null || e.getItems() == null || e.getItems().isEmpty()) return;
+        GameEvent ev = base(GameEvent.NPC);
+        petDetector.onSource(npc.getName(), client.getTickCount());
+        ev.npcId = npc.getId();
+        ev.npcName = npc.getName();
+        addItems(ev, new ArrayList<>(e.getItems()));
+        submit(ev, true);
+    }
+
     private final com.forgebingo.core.GroundGuard groundGuard = new com.forgebingo.core.GroundGuard();
 
     /** "Drop" on a backpack item: that item lying on the ground next is the player's own, not a monster's drop. */
