@@ -1072,16 +1072,44 @@ class ForgeBingoPanel extends PluginPanel
         boolean grouped = !options && groups.size() < t.tasks.size();
         int n = 0;
         int gi = 0;
+        // once one "OR" option is done the others are not needed (owner, 2026-11-27): the finished option goes on top
+        // and the rest shrink to one line
+        boolean anyTileDone = options && anyCompleted(t.tasks);
         for (java.util.List<ApiModels.Task> g : groups)
         {
             gi++;
+            boolean groupDone = anyTileDone || (grouped && g.size() > 1 && anyCompleted(g));
             if (grouped)
             {
-                detail.add(left(smallCaps("Task " + gi + (g.size() > 1 ? ": any one option" : ""))));
+                detail.add(left(smallCaps("Task " + gi + (g.size() > 1 ? (groupDone ? ": done" : ": any one option") : ""))));
                 detail.add(gap(2));
             }
+            java.util.List<ApiModels.Task> shown = g;
+            if (groupDone)
+            {
+                shown = new java.util.ArrayList<>();
+                StringBuilder rest = new StringBuilder();
+                for (ApiModels.Task k : g)
+                {
+                    if (k.completed) { shown.add(k); continue; }
+                    counted += k.approvedQty;
+                    waiting += k.pendingQty;
+                    if (rest.length() > 0) rest.append(", ");
+                    rest.append(k.description == null || k.description.isEmpty() ? "another option" : k.description);
+                }
+                for (ApiModels.Task k : shown)
+                {
+                    counted += k.approvedQty;
+                    waiting += k.pendingQty;
+                    detail.add(taskBox(t, k, secret, opened));
+                    detail.add(gap(3));
+                }
+                if (rest.length() > 0) detail.add(left(cardText("Not needed now: " + rest, MUTED, CARD_TEXT - 10)));
+                detail.add(gap(6));
+                continue;
+            }
             int oi = 0;
-            for (ApiModels.Task k : g)
+            for (ApiModels.Task k : shown)
             {
                 counted += k.approvedQty;
                 waiting += k.pendingQty;
@@ -1353,6 +1381,14 @@ class ForgeBingoPanel extends PluginPanel
         grid.setPreferredSize(d);
         grid.setMaximumSize(d);
         return grid;
+    }
+
+    /** true when at least one of these tasks is finished */
+    static boolean anyCompleted(java.util.List<ApiModels.Task> tasks)
+    {
+        if (tasks == null) return false;
+        for (ApiModels.Task k : tasks) if (k != null && k.completed) return true;
+        return false;
     }
 
     /**
