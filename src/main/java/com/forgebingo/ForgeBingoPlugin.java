@@ -1487,6 +1487,11 @@ public class ForgeBingoPlugin extends Plugin
         });
         ChatParsers.killCount(msg).ifPresent(k -> {
             petDetector.onSource(k.boss, tick);
+            if (k.boss != null && k.boss.toLowerCase(Locale.ROOT).contains("gauntlet"))
+            {
+                gauntletDoneTick = tick;
+                gauntletDoneName = k.boss.toLowerCase(Locale.ROOT).contains("corrupted") ? "Corrupted Gauntlet" : "The Gauntlet";
+            }
             if (!config.sendKc()) return;
             GameEvent ev = base(GameEvent.KC);
             ev.sourceName = k.boss; // one event per kill; the server matches the name against its catalogue
@@ -1922,7 +1927,7 @@ public class ForgeBingoPlugin extends Plugin
         for (ActivityWatcher.Drop d : drops)
         {
             if (!config.sendChestLoot()) continue;
-            GameEvent ev = byActivity.computeIfAbsent(d.activity, k -> {
+            GameEvent ev = byActivity.computeIfAbsent(gauntletActivity(d.itemId, d.activity, tick), k -> {
                 GameEvent n = base(GameEvent.RAID_CHEST);
                 n.sourceName = k; // the server knows every activity name (npc_sources aliases)
                 return n;
@@ -1930,6 +1935,20 @@ public class ForgeBingoPlugin extends Plugin
             ev.addItem(d.itemId, d.quantity);
         }
         for (GameEvent ev : byActivity.values()) submit(ev, true);
+    }
+
+    /** crystal seeds: the Gauntlet's reward chest gives them straight to the backpack (the weapon seed is also an LMS buy) */
+    private static final java.util.Set<Integer> GAUNTLET_SEEDS = java.util.Set.of(4207, 23956, 25859);
+    /** the reward chest is opened in the lobby right after the boss; about five minutes is plenty */
+    private static final int GAUNTLET_CHEST_TICKS = 500;
+    private volatile int gauntletDoneTick = Integer.MIN_VALUE / 2;
+    private volatile String gauntletDoneName = "The Gauntlet";
+
+    /** A crystal seed reaching the backpack just after a Gauntlet completion is that Gauntlet's reward. */
+    private String gauntletActivity(int itemId, String activity, int tick)
+    {
+        if (GAUNTLET_SEEDS.contains(itemId) && tick - gauntletDoneTick <= GAUNTLET_CHEST_TICKS) return gauntletDoneName;
+        return activity;
     }
 
     /**

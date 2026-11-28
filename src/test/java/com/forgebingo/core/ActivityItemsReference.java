@@ -37,6 +37,15 @@ public final class ActivityItemsReference
         m.put(30750, "Forgotten lockbox");
         m.put(30753, "Forgotten lockbox");
         m.put(30756, "Forgotten lockbox");
+        m.put(23956, "The Gauntlet");
+        m.put(25859, "The Gauntlet");
+        m.put(7989, "Fishing");
+        m.put(7991, "Fishing");
+        m.put(7993, "Fishing");
+        m.put(31408, "Fishing");
+        m.put(31412, "Fishing");
+        m.put(31416, "Fishing");
+        m.put(31424, "Fishing");
         m.put(32115, "Sailing");
         m.put(31916, "Sailing");
         m.put(31406, "Sailing");

@@ -24,6 +24,16 @@
 [Forgotten lockbox]
 30750 30753 30756
 
+# The Gauntlet's reward chest puts its loot straight into the backpack, with no loot event (2026-11-28: 55 Corrupted
+# Gauntlet completions, no loot seen). The crystal weapon seed is listed under Last Man Standing (its shop sells it);
+# right after a Gauntlet completion the plugin reports it as the Gauntlet's.
+[The Gauntlet]
+23956 25859
+
+# big fish are caught straight into the backpack (Big Fish tile, 2026-11-28); the Sailing ones are under [Sailing]
+[Fishing]
+7989 7991 7993 31408 31412 31416 31424
+
 [Sailing]
 32115 31961 31946 31949 31959 31952 31954 31420 31428 32087 32090 32093
 32096 32099 32102 32104 32106 32108 32110 32113 31916
