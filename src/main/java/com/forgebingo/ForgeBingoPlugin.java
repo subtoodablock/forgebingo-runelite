@@ -1183,13 +1183,15 @@ public class ForgeBingoPlugin extends Plugin
             }
         }
         addItems(ev, own);
-        submit(ev, true);
+        // not sent yet: the game's own report of this kill (onServerNpcLoot) is sent instead when there is one
+        npcLootMerge.onLegacy(npc.getName(), tick, ev);
     }
 
     /**
-     * Loot the game hands over without putting it on the ground under the monster: the Maggot King's corpse (straight
-     * to the backpack), Araxxor, the Royal Titans, the Mad Angel and the like. RuneLite reports those here and not as
-     * NpcLootReceived, so until 2026-11-27 none of them counted by themselves (208 Maggot King kills, no loot seen).
+     * What the game itself says a monster gave. It is exact, and it is the only report for monsters whose loot never
+     * lies under them: the Maggot King's corpse (straight to the backpack), The Whisperer, Araxxor, the Royal Titans,
+     * the Mad Angel. Until 2026-11-27 none of those counted by themselves (208 Maggot King kills, no loot seen).
+     * Ordinary monsters are reported here too, and again by onNpcLootReceived: NpcLootMerge sends each kill once.
      * Sent as the same monster drop as any other, named after the monster.
      */
     @Subscribe
@@ -1197,8 +1199,12 @@ public class ForgeBingoPlugin extends Plugin
     {
         net.runelite.api.NPCComposition npc = e.getComposition();
         if (!config.sendNpcLoot() || npc == null || npc.getName() == null || e.getItems() == null || e.getItems().isEmpty()) return;
+        int tick = client.getTickCount();
+        // the game reports pickpocket loot the same way: that is handled as pickpocketing (onLootReceived), not as a kill
+        if (tick - lastPickpocketTick <= 1) return;
+        npcLootMerge.onServer(npc.getName(), tick);
         GameEvent ev = base(GameEvent.NPC);
-        petDetector.onSource(npc.getName(), client.getTickCount());
+        petDetector.onSource(npc.getName(), tick);
         ev.npcId = npc.getId();
         ev.npcName = npc.getName();
         addItems(ev, new ArrayList<>(e.getItems()));
@@ -1206,6 +1212,8 @@ public class ForgeBingoPlugin extends Plugin
     }
 
     private final com.forgebingo.core.GroundGuard groundGuard = new com.forgebingo.core.GroundGuard();
+    /** pairs the game's report of a kill with RuneLite's older one, so each kill is sent once */
+    private final com.forgebingo.core.NpcLootMerge<GameEvent> npcLootMerge = new com.forgebingo.core.NpcLootMerge<>();
     /** the activity name Sailing rewards are listed under in activity-items.txt */
     private static final String SAILING = "Sailing";
 
@@ -1891,6 +1899,8 @@ public class ForgeBingoPlugin extends Plugin
         petDetector.onTick(tick).ifPresent(this::reportPet);
         if (!openTradeWindows.isEmpty()) activityWatcher.onTrade(tick);
         groundGuard.prune(tick);
+        // kills the game itself did not report: sent now, from RuneLite's older report
+        for (GameEvent held : npcLootMerge.flush(tick)) submit(held, true);
         // one event (and one screenshot) per activity per tick: a chest or shop trip with several uniques counts each
         Map<String, GameEvent> byActivity = new java.util.LinkedHashMap<>();
         // the account's death memory, once its profile is loaded after logging in
