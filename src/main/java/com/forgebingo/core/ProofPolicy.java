@@ -4,7 +4,7 @@ import java.util.Locale;
 
 /**
  * When an event gets an automatic proof screenshot and how many: only events that could count for the board, one
- * picture for drops, kills and clues, two for a reward chest's loot window. The server still decides what counted.
+ * picture for drops, kills, clues and a reward chest's loot window. The server still decides what counted.
  */
 public final class ProofPolicy
 {
@@ -12,8 +12,8 @@ public final class ProofPolicy
     public static final long[] SINGLE_SHOT_DELAYS_MS = {600};
     /** one picture of the clue reward window, once it has drawn */
     public static final long[] CLUE_SHOT_DELAYS_MS = {600};
-    /** A reward chest's loot window: once as it opens and again a little later (sent as "1 of 2" and "2 of 2"). */
-    public static final long[] CHEST_SHOT_DELAYS_MS = {300, 1800};
+    /** A reward chest's loot window: one picture, one game tick after it opens (owner, 2026-11-28: one is enough) */
+    public static final long[] CHEST_SHOT_DELAYS_MS = {600};
 
     private ProofPolicy()
     {
@@ -74,8 +74,8 @@ public final class ProofPolicy
      */
     public static long[] shotDelays(String sourceType, String sourceName, boolean chestWindow)
     {
-        // Two pictures only for reward chests (raids, Barrows, Moons); clues, boss drops and kill counts get one
-        // (owner, 2026-11-14).
+        // One picture each: reward chests (raids, Barrows, Moons), clues, boss drops and kill counts
+        // (owner, 2026-11-14; chests went from two to one on 2026-11-28).
         if (isClue(sourceType, sourceName)) return CLUE_SHOT_DELAYS_MS;
         return chestWindow ? CHEST_SHOT_DELAYS_MS : SINGLE_SHOT_DELAYS_MS;
     }

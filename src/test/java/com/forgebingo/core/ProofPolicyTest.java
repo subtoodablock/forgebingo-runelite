@@ -145,7 +145,7 @@ public class ProofPolicyTest
         // a clue's reward window is never treated as a chest, even when asked that way
         assertEquals(1, ProofPolicy.shotDelays(GameEvent.CLUE, "hard", true).length);
         assertEquals(1, ProofPolicy.shotDelays(GameEvent.KC, "Clue scroll (elite)", true).length);
-        assertArrayEquals(new long[] {300, 1800}, ProofPolicy.shotDelays(GameEvent.RAID_CHEST, "Barrows", true));
+        assertArrayEquals(new long[] {600}, ProofPolicy.shotDelays(GameEvent.RAID_CHEST, "Barrows", true));
     }
 
     @Test

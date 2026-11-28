@@ -21,8 +21,8 @@ public class ShotCountTest
     @Test
     public void rewardChestsTakeTwo()
     {
-        assertEquals(2, ForgeBingoPlugin.shotDelays(GameEvent.RAID_CHEST, "Chambers of Xeric", true).length);
-        assertEquals(2, ForgeBingoPlugin.shotDelays(GameEvent.RAID_CHEST, "Barrows", true).length);
-        assertEquals(2, ForgeBingoPlugin.shotDelays(GameEvent.RAID_CHEST, "Lunar Chest", true).length);
+        assertEquals(1, ForgeBingoPlugin.shotDelays(GameEvent.RAID_CHEST, "Chambers of Xeric", true).length);
+        assertEquals(1, ForgeBingoPlugin.shotDelays(GameEvent.RAID_CHEST, "Barrows", true).length);
+        assertEquals(1, ForgeBingoPlugin.shotDelays(GameEvent.RAID_CHEST, "Lunar Chest", true).length);
     }
 }
