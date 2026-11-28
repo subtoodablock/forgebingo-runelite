@@ -59,7 +59,13 @@ class ForgeBingoPanel extends PluginPanel
     private static final int BAR = 8;
     /** usable width inside the column */
     /** RuneLite's sidebar shows a little less than PANEL_WIDTH (its own border), so keep a safety margin for text. */
-    private static final int INNER = PluginPanel.PANEL_WIDTH - 2 * PAD - BAR - 14;
+    /**
+     * The panel is as wide as every other plugin's: RuneLite gives a side panel PANEL_WIDTH plus the scrollbar's
+     * width (242). It used to ask for PANEL_WIDTH alone, which made it 17 pixels narrower than its neighbours and
+     * shrank the sidebar whenever it was opened (owner, 2026-11-28: "smaller than other plugins").
+     */
+    static final int WIDTH = PluginPanel.PANEL_WIDTH + PluginPanel.SCROLLBAR_WIDTH;
+    private static final int INNER = WIDTH - 2 * PAD - BAR - 14;
     /** wrap width for text inside a card (card padding + accent stripe) */
     private static final int CARD_TEXT = INNER - 22;
     // the look (palette, fonts, painted cards and bars) lives in PanelUi
@@ -437,7 +443,7 @@ class ForgeBingoPanel extends PluginPanel
     @Override
     public Dimension getPreferredSize()
     {
-        return new Dimension(PluginPanel.PANEL_WIDTH, super.getPreferredSize().height);
+        return new Dimension(WIDTH, super.getPreferredSize().height);
     }
 
     private final JLabel headToggle = new PanelUi.CrispLabel("Hide");
